@@ -1,74 +1,123 @@
+'use client';
+
 import { create } from 'zustand';
+import type {
+  AppView,
+  UserData,
+  PostData,
+  ChatMessage,
+  AppNotification,
+  ConversationData,
+} from '@/lib/types';
 
-export type ViewType =
-  | 'login'
-  | 'signup'
-  | 'forgot-password'
-  | 'home'
-  | 'explore'
-  | 'notifications'
-  | 'messages'
-  | 'chat'
-  | 'profile'
-  | 'edit-profile'
-  | 'post-detail'
-  | 'bookmarks'
-  | 'settings'
-  | 'user-list'
-  | 'search-results';
-
-interface AppStore {
+interface AppState {
   // Navigation
-  currentView: ViewType;
-  viewParams: Record<string, string>;
-  viewHistory: Array<{ view: ViewType; params: Record<string, string> }>;
-
-  // UI state
-  isCreatePostOpen: boolean;
-  sidebarOpen: boolean;
-
-  // Navigation actions
-  navigate: (view: ViewType, params?: Record<string, string>) => void;
+  currentView: AppView;
+  previousView: AppView | null;
+  navigate: (view: AppView) => void;
   goBack: () => void;
 
-  // UI actions
-  setCreatePostOpen: (open: boolean) => void;
-  setSidebarOpen: (open: boolean) => void;
-  toggleSidebar: () => void;
+  // Auth
+  currentUser: UserData | null;
+  currentUserId: string | null;
+  setCurrentUser: (user: UserData | null, uid: string | null) => void;
+
+  // View params
+  viewParams: Record<string, string>;
+  setViewParams: (params: Record<string, string>) => void;
+
+  // Post detail
+  selectedPostId: string | null;
+  setSelectedPostId: (id: string | null) => void;
+
+  // Chat
+  selectedConversationId: string | null;
+  selectedConversationUser: UserData | null;
+  setSelectedConversation: (id: string, user: UserData) => void;
+
+  // User list
+  userListType: 'followers' | 'following' | null;
+  userListUserId: string | null;
+  setUserList: (type: 'followers' | 'following', userId: string) => void;
+
+  // Search
+  searchQuery: string;
+  setSearchQuery: (query: string) => void;
+
+  // Notifications
+  notifications: AppNotification[];
+  unreadCount: number;
+  setNotifications: (notifications: AppNotification[]) => void;
+  setUnreadCount: (count: number) => void;
+
+  // Admin
+  isAdminMode: boolean;
+  setAdminMode: (mode: boolean) => void;
+
+  // Compose
+  isComposeOpen: boolean;
+  setComposeOpen: (open: boolean) => void;
+  replyToPostId: string | null;
+  setReplyToPostId: (id: string | null) => void;
 }
 
-export const useAppStore = create<AppStore>((set, get) => ({
-  currentView: 'login',
-  viewParams: {},
-  viewHistory: [],
-
-  isCreatePostOpen: false,
-  sidebarOpen: false,
-
-  navigate: (view, params = {}) => {
-    const { currentView, viewParams, viewHistory } = get();
-    set({
-      viewHistory: [...viewHistory, { view: currentView, params: { ...viewParams } }],
+export const useAppStore = create<AppState>((set) => ({
+  // Navigation
+  currentView: 'auth',
+  previousView: null,
+  navigate: (view) =>
+    set((state) => ({
+      previousView: state.currentView,
       currentView: view,
-      viewParams: params,
-    });
-  },
+    })),
+  goBack: () =>
+    set((state) => ({
+      currentView: state.previousView || 'home',
+      previousView: null,
+    })),
 
-  goBack: () => {
-    const { viewHistory } = get();
-    if (viewHistory.length > 0) {
-      const prev = viewHistory[viewHistory.length - 1];
-      set({
-        viewHistory: viewHistory.slice(0, -1),
-        currentView: prev.view,
-        viewParams: prev.params,
-      });
-    } else {
-      set({ currentView: 'home', viewParams: {} });
-    }
-  },
+  // Auth
+  currentUser: null,
+  currentUserId: null,
+  setCurrentUser: (user, uid) => set({ currentUser: user, currentUserId: uid }),
 
-  setCreatePostOpen: (open) => set({ isCreatePostOpen: open }),
-  setSidebarOpen: (open) => set({ sidebarOpen: open }),
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  // View params
+  viewParams: {},
+  setViewParams: (params) => set({ viewParams: params }),
+
+  // Post detail
+  selectedPostId: null,
+  setSelectedPostId: (id) => set({ selectedPostId: id }),
+
+  // Chat
+  selectedConversationId: null,
+  selectedConversationUser: null,
+  setSelectedConversation: (id, user) =>
+    set({ selectedConversationId: id, selectedConversationUser: user }),
+
+  // User list
+  userListType: null,
+  userListUserId: null,
+  setUserList: (type, userId) =>
+    set({ userListType: type, userListUserId: userId }),
+
+  // Search
+  searchQuery: '',
+  setSearchQuery: (query) => set({ searchQuery: query }),
+
+  // Notifications
+  notifications: [],
+  unreadCount: 0,
+  setNotifications: (notifications) => set({ notifications }),
+  setUnreadCount: (count) => set({ unreadCount: count }),
+
+  // Admin
+  isAdminMode: false,
+  setAdminMode: (mode) => set({ isAdminMode: mode }),
+
+  // Compose
+  isComposeOpen: false,
+  setComposeOpen: (open) => set({ isComposeOpen: open }),
+  replyToPostId: null,
+  setReplyToPostId: (id) => set({ replyToPostId: id }),
 }));

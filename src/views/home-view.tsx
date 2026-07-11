@@ -3,72 +3,111 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PostCard, PostData } from '@/components/tweets/post-card';
+import { PostCard } from '@/components/tweets/post-card';
 import { useAppStore } from '@/store/app-store';
-import { ImageIcon, Sparkles, X } from 'lucide-react';
+import { PenSquare } from 'lucide-react';
 import { toast } from 'sonner';
+import type { PostData, UserData } from '@/lib/types';
+import {
+  ref,
+  onValue,
+  off,
+  query,
+  orderByChild,
+  limitToLast,
+  get,
+} from 'firebase/database';
+import { db } from '@/lib/firebase';
 
 export function HomeView() {
-  const { session } = useAuth();
-  const [posts, setPosts] = useState<PostData[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
+  const { user, userData } = useAuth();
+  const userId = user?.uid;
+  const { setComposeOpen } = useAppStore();
+  const [posts, setPosts] = useState<(PostData & { author: UserData | null })[]>([]);
+  const [authors, setAuthors] = useState<Record<string, UserData>>({});
   const [isLoading, setIsLoading] = useState(true);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
-  const [hasMore, setHasMore] = useState(true);
-  const [feedTab, setFeedTab] = useState('الكل');
-  const [newPostContent, setNewPostContent] = useState('');
-  const [newPostImage, setNewPostImage] = useState('');
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [feedTab, setFeedTab] = useState<'الكل' | 'المتابَعين'>('الكل');
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  const [loadCount, setLoadCount] = useState(15);
   const loadMoreRef = useRef<HTMLDivElement>(null);
 
-  const fetchPosts = useCallback(
-    async (reset = false) => {
-      if (reset) {
-        setIsLoading(true);
-      } else {
-        setIsLoadingMore(true);
-      }
+  const avatar = userData?.avatarBase64 || '';
+  const name = userData?.fullName || 'مستخدم';
 
-      try {
-        const params = new URLSearchParams({
-          limit: '20',
-          ...(feedTab === 'لك' && { following: 'true' }),
-          ...(!reset && cursor ? { cursor } : {}),
-        });
-
-        const res = await fetch(`/api/posts?${params}`);
-        if (!res.ok) throw new Error();
-
-        const data = await res.json();
-        const newPosts: PostData[] = data.posts || [];
-
-        if (reset) {
-          setPosts(newPosts);
-        } else {
-          setPosts((prev) => [...prev, ...newPosts]);
-        }
-
-        setCursor(data.nextCursor || null);
-        setHasMore(newPosts.length >= 20);
-      } catch {
-        // Will show empty state
-      } finally {
-        setIsLoading(false);
-        setIsLoadingMore(false);
-      }
-    },
-    [cursor, feedTab]
-  );
-
+  // Fetch following list
   useEffect(() => {
-    setCursor(null);
-    fetchPosts(true);
-  }, [feedTab, fetchPosts]);
+    if (!userId) return;
+    const followsRef = ref(db, `follows/${userId}`);
+    const unsub = onValue(followsRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.val();
+        const ids = new Set(Object.keys(data));
+        setFollowingIds(ids);
+      } else {
+        setFollowingIds(new Set());
+      }
+    });
+    return () => off(followsRef);
+  }, [userId]);
+
+  // Fetch posts
+  useEffect(() => {
+    const postsQuery = query(
+      ref(db, 'posts'),
+      orderByChild('timestamp'),
+      limitToLast(loadCount)
+    );
+
+    const unsub = onValue(postsQuery, async (snap) => {
+      if (!snap.exists()) {
+        setPosts([]);
+        setIsLoading(false);
+        return;
+      }
+
+      const data = snap.val() as Record<string, PostData>;
+      const allPosts: PostData[] = Object.values(data)
+        .filter((p) => {
+          return !p.isDeleted;
+        })
+        .sort((a, b) => b.timestamp - a.timestamp);
+
+      setPosts(allPosts.map((p) => ({ ...p, author: null })));
+      setIsLoading(false);
+
+      // Fetch authors
+      const authorIds = [...new Set(allPosts.map((p: PostData) => p.userId))];
+      const newAuthors: Record<string, UserData> = {};
+      for (const aid of authorIds) {
+        try {
+          const aSnap = await get(ref(db, `users/${aid}`));
+          if (aSnap.exists()) {
+            newAuthors[aid] = aSnap.val();
+          }
+        } catch {
+          // skip
+        }
+      }
+      setAuthors((prev) => ({ ...prev, ...newAuthors }));
+    });
+
+    return () => off(postsQuery);
+  }, [loadCount]);
+
+  // Attach authors to posts
+  const postsWithAuthors = posts.map((p) => ({
+    ...p,
+    author: authors[p.userId] || null,
+  }));
+
+  // Filter based on tab
+  const filteredPosts =
+    feedTab === 'المتابَعين'
+      ? postsWithAuthors.filter((p) => followingIds.has(p.userId))
+      : postsWithAuthors;
 
   // Infinite scroll
   useEffect(() => {
@@ -76,39 +115,15 @@ export function HomeView() {
     if (!el) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting && hasMore && !isLoadingMore) {
-          fetchPosts(false);
+        if (entries[0].isIntersecting && !isLoading) {
+          setLoadCount((prev) => prev + 15);
         }
       },
-      { rootMargin: '200px' }
+      { rootMargin: '400px' }
     );
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasMore, isLoadingMore, fetchPosts]);
-
-  const handleCreatePost = async () => {
-    if (!newPostContent.trim() || isSubmitting) return;
-    setIsSubmitting(true);
-    try {
-      const res = await fetch('/api/posts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: newPostContent.trim(),
-          imageUrls: newPostImage.trim(),
-        }),
-      });
-      if (!res.ok) throw new Error();
-      setNewPostContent('');
-      setNewPostImage('');
-      toast.success('تم نشر التغريدة');
-      fetchPosts(true);
-    } catch {
-      toast.error('فشل في النشر');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  }, [isLoading]);
 
   return (
     <div>
@@ -119,7 +134,11 @@ export function HomeView() {
 
       {/* Tabs */}
       <div className="sticky top-[57px] z-30 bg-background/95 backdrop-blur-sm border-b border-border/50">
-        <Tabs value={feedTab} onValueChange={setFeedTab} className="w-full">
+        <Tabs
+          value={feedTab}
+          onValueChange={(v) => setFeedTab(v as 'الكل' | 'المتابَعين')}
+          className="w-full"
+        >
           <TabsList className="w-full h-12 bg-transparent p-0">
             <TabsTrigger
               value="لك"
@@ -137,61 +156,27 @@ export function HomeView() {
         </Tabs>
       </div>
 
-      {/* Create Post Inline */}
-      <div className="border-b border-border/50 px-4 py-3">
+      {/* Compose Area */}
+      <div
+        className="border-b border-border/50 px-4 py-3 cursor-pointer hover:bg-accent/30 transition-colors"
+        onClick={() => setComposeOpen(true)}
+      >
         <div className="flex gap-3">
-          <Avatar className="h-10 w-10 shrink-0">
-            <AvatarImage src={session?.user?.image || ''} alt={session?.user?.name} />
-            <AvatarFallback className="bg-primary/20 text-primary text-sm">
-              {session?.user?.name?.charAt(0) || 'م'}
-            </AvatarFallback>
-          </Avatar>
-          <div className="flex-1">
-            <Textarea
-              value={newPostContent}
-              onChange={(e) => setNewPostContent(e.target.value)}
-              placeholder="ما الذي يحدث؟"
-              className="min-h-[60px] resize-none border-0 bg-transparent text-sm focus-visible:ring-0 p-0 placeholder:text-muted-foreground/60"
-              dir="rtl"
-            />
-            {newPostImage && (
-              <div className="relative rounded-xl overflow-hidden border border-border/50 mt-2">
-                <img src={newPostImage} alt="صورة" className="w-full max-h-40 object-cover" onError={() => setNewPostImage('')} />
-                <Button
-                  variant="secondary"
-                  size="icon"
-                  className="absolute top-1 left-1 h-6 w-6 rounded-full bg-black/60 hover:bg-black/80"
-                  onClick={() => setNewPostImage('')}
-                >
-                  <X className="h-3 w-3" />
-                </Button>
+          <div className="shrink-0">
+            {avatar ? (
+              <img
+                src={`data:image/jpeg;base64,${avatar}`}
+                alt={name}
+                className="h-10 w-10 rounded-full object-cover"
+              />
+            ) : (
+              <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                {name.charAt(0)}
               </div>
             )}
-            <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
-              <div className="flex gap-1">
-                <Button variant="ghost" size="icon" className="h-8 w-8 text-sky-400 hover:text-sky-300 hover:bg-sky-400/10" onClick={() => {
-                  const url = prompt('أدخل رابط الصورة:');
-                  if (url) setNewPostImage(url);
-                }}>
-                  <ImageIcon className="h-4 w-4" />
-                </Button>
-              </div>
-              <Button
-                size="sm"
-                className="rounded-full px-4 font-bold"
-                disabled={!newPostContent.trim() || isSubmitting}
-                onClick={handleCreatePost}
-              >
-                {isSubmitting ? (
-                  <span className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <span className="flex items-center gap-1.5">
-                    <Sparkles className="h-3.5 w-3.5" />
-                    انشر
-                  </span>
-                )}
-              </Button>
-            </div>
+          </div>
+          <div className="flex-1 pt-2">
+            <p className="text-muted-foreground/60 text-sm">ما الذي يحدث؟</p>
           </div>
         </div>
       </div>
@@ -215,25 +200,39 @@ export function HomeView() {
             </div>
           ))}
         </div>
-      ) : posts.length === 0 ? (
+      ) : filteredPosts.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-          <Sparkles className="h-12 w-12 text-muted-foreground/40 mb-4" />
+          <PenSquare className="h-12 w-12 text-muted-foreground/40 mb-4" />
           <h3 className="text-lg font-bold mb-1">لا توجد تغريدات</h3>
           <p className="text-sm text-muted-foreground">
-            كن أول من ينشر شيئًا اليوم!
+            {feedTab === 'المتابَعين'
+              ? 'تابع أشخاصًا لرؤية تغريداتهم هنا'
+              : 'كن أول من ينشر شيئًا اليوم!'}
           </p>
         </div>
       ) : (
         <div>
-          {posts.map((post) => (
-            <PostCard key={post.id} post={post} />
+          {filteredPosts.map((post) => (
+            <PostCard
+              key={post.id}
+              post={{
+                id: post.id,
+                userId: post.userId,
+                content: post.content,
+                imageBase64: post.imageBase64 || '',
+                timestamp: post.timestamp,
+                likesCount: post.likesCount || 0,
+                commentsCount: post.commentsCount || 0,
+                repostsCount: post.repostsCount || 0,
+                isDeleted: post.isDeleted || false,
+              }}
+              author={post.author}
+            />
           ))}
           <div ref={loadMoreRef} className="py-4">
-            {isLoadingMore && (
-              <div className="flex justify-center py-4">
-                <span className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-              </div>
-            )}
+            <div className="flex justify-center py-4">
+              <span className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin opacity-50" />
+            </div>
           </div>
         </div>
       )}

@@ -181,3 +181,232 @@ Stage Summary:
 - Zero remaining `useSession` usages in the codebase
 - `signIn` import in `auth-view.tsx` preserved (used for login form submission, not React 19 affected)
 - ESLint clean: 0 errors, 0 warnings
+
+---
+Task ID: 10-11
+Agent: Fullstack Developer - Messages & Notifications
+Task: Build messages, chat, and notifications views
+
+Work Log:
+- Created messages-view.tsx with real-time conversations list from Firebase `conversations/` node
+  - Listens to all conversations, filters by current user participation
+  - Fetches other user data from `users/{uid}` with caching
+  - Counts unread messages per conversation by scanning `messages/{conversationId}`
+  - Search bar to filter conversations by user name
+  - New message button navigates to explore view
+  - Click conversation → setSelectedConversation(id, userData) → navigate('chat')
+  - Skeleton loading states, empty states, relative time formatting in Arabic
+- Created chat-view.tsx with Firebase real-time messaging
+  - Real-time listener on `messages/{conversationId}` ordered by timestamp
+  - Send message via `push()` to Firebase, updates conversation's lastMessage/timestamp
+  - Auto-marks unread messages as read on open via `update()` batch
+  - Image sending support (base64 via FileReader, embedded in message content as `[img:base64]`)
+  - Typing indicator: writes to `typing/{conversationId}/{uid}`, listens to other user's typing node
+  - Auto-scroll to bottom on new messages, date separators between days
+  - Read receipt indicators (✓/✓✓) on sent messages
+  - Enter to send, Shift+Enter for newline, image preview with remove button
+  - Cleanup: typing indicator cleared, Firebase listeners detached on unmount
+- Created notifications-view.tsx with real-time notifications
+  - Listens to `notifications/{userId}` via Firebase onValue
+  - Resolves actor user data from `users/{actorId}` with caching
+  - 5 notification types with Arabic labels and color-coded icons:
+    - like: "أعجب بمنشورك" (rose heart)
+    - comment: "علّق على منشورك" (emerald message)
+    - repost: "أعاد نشر منشورك" (emerald repeat)
+    - follow: "بدأ بمتابعتك" (amber user-plus)
+    - mention: "أشار إليك" (amber at-sign)
+  - Mark individual as read (optimistic update + Firebase update)
+  - "قراءة الكل" button marks all as read in batch
+  - Click: follow → navigate to actor profile, others → navigate to post detail
+  - Updates unread count badge in Zustand store for bottom nav
+  - Unread indicator (primary dot) and background highlight
+
+Stage Summary:
+- 3 view files completely rewritten with Firebase Realtime Database subscriptions
+- All Firebase listeners properly cleaned up on unmount via `off()`
+- Full Arabic RTL support, dark theme, mobile-first responsive
+- Real-time message send/receive with auto-scroll and typing indicators
+- Notification system with optimistic read updates and badge count tracking
+
+---
+Task ID: 14-15-16-17
+Agent: Fullstack Developer - Admin App
+Task: Build admin panel views
+
+Work Log:
+- Created admin-login-view.tsx with Firebase auth + isAdmin check
+  - Centered card with AT logo, email/password fields
+  - Signs in via signInWithEmailAndPassword, checks userData.isAdmin
+  - Non-admin users get signed out with error "ليس لديك صلاحيات المدير"
+  - Sets isAdminMode(true) and navigates to admin-dashboard on success
+- Created admin-dashboard-view.tsx with stats and overview
+  - 4 stat cards (total users, total posts, today's posts, active reports)
+  - Recent 5 users list with avatar, name, status badge
+  - Recent 5 posts list with author info and content preview
+  - Quick action buttons to users, reports, analytics
+  - Real-time Firebase listeners with cleanup on unmount
+- Created admin-users-view.tsx with full user management
+  - Desktop table + mobile card layout responsive design
+  - Search by username/email/name with real-time filtering
+  - Actions: view profile, suspend/unsuspend, verify/unverify, delete account
+  - AlertDialog confirmation for destructive actions
+  - Pagination with PAGE_SIZE=15
+- Created admin-posts-view.tsx with content moderation
+  - Post list with author info, content preview, image thumbnails, engagement stats
+  - Tabs filter: all, with-images, recent (24h)
+  - Search by content, view full post dialog, delete with soft-delete (isDeleted: true)
+  - Pagination
+- Created admin-comments-view.tsx with comment moderation
+  - Comment list with author, content, linked post context preview
+  - Search by content, view related post dialog, delete comment
+  - Real-time listeners for comments, users, and posts
+- Created admin-reports-view.tsx with report management
+  - Report list with reporter/target info, reason, status badges
+  - Color-coded status badges: pending (orange), reviewed (sky), resolved (emerald), dismissed (gray)
+  - Tabs filter by status, detailed report dialog with full context
+  - Actions: mark reviewed, resolve, dismiss with Firebase update
+  - Empty state with inbox icon
+- Created admin-analytics-view.tsx with recharts
+  - Summary stat cards (users, posts, comments, total likes)
+  - LineChart: user growth over last 14 days
+  - BarChart: daily posts over last 14 days
+  - PieChart: content distribution (with images vs text only)
+  - Custom RTL-compatible tooltip component
+  - Client-side data aggregation from Firebase
+  - Loading skeletons for all chart sections
+
+Stage Summary:
+- 7 admin view files created with full Firebase Realtime Database integration
+- Admin authentication with isAdmin verification
+- Shared AdminNav sidebar (desktop) + Sheet (mobile) in each view
+- Content moderation capabilities for posts and comments
+- Report management with status workflow
+- Analytics dashboard with 3 recharts visualizations
+- All text in Arabic, dark theme, RTL layout, mobile-first responsive
+- Zero TypeScript errors in admin files (verified via tsc --noEmit)
+
+---
+Task ID: 5-6-7
+Agent: Fullstack Developer - User App Core
+Task: Build user app core views and components
+
+Work Log:
+- Created sidebar.tsx with AT logo (img tag /at-icon.png ~40x40 rounded) and Firebase-based navigation
+  - 7 nav items: الرئيسية, استكشاف, الإشعارات, الرسائل, الملف الشخصي, الإشعارات المحفوظة, الإعدادات
+  - Admin link (Shield icon) shown when userData.isAdmin
+  - Logout button, compose button (PenSquare)
+  - User avatar/name at bottom with base64 image support
+  - Desktop only (hidden below lg), exported Sidebar + MobileSidebar (null)
+- Created bottom-nav.tsx for mobile navigation
+  - Fixed bottom, visible mobile only (lg:hidden), 5 items: Home, Explore, Notifications (with unreadCount badge), Messages, Profile
+  - Active item highlighted, uses unreadCount from store for notification badge
+- Created post-card.tsx with Firebase real-time likes/bookmarks/reposts
+  - Props: post: PostData, author: UserData | null
+  - Avatar (base64 or fallback initial), name, username, verified badge (BadgeCheck), relative time in Arabic
+  - Hashtag highlighting (rose color, click → search), @mention highlighting
+  - Post image display from imageBase64
+  - Action buttons: comment, repost (emerald, optimistic), like (rose heart toggle, optimistic), bookmark (amber toggle), share
+  - Real-time like/unlike/bookmark/repost via Firebase onValue listeners
+  - Click post → setSelectedPostId → navigate('post-detail')
+  - Click avatar → setViewParams({userId}) → navigate('profile')
+  - Delete own post option (dropdown menu, soft delete via isDeleted: true)
+  - Exported AvatarDisplay, formatRelativeTime, renderContent helpers
+- Created create-post-dialog.tsx with base64 image upload
+  - Dialog on desktop, Sheet on mobile (uses useIsMobile hook)
+  - Textarea with 280 char limit, remaining count shown in Arabic
+  - File input → FileReader → base64 (max 5MB validation)
+  - Image preview with remove button
+  - Reply mode support (shows "ردًا على @username" when replyToPostId is set)
+  - Posts to Firebase `posts/` node via push(), or `comments/` for replies
+  - Increments user's postsCount on new post, comment count on reply
+  - Loading state during submission, toast on success/error
+- Created auth-view.tsx with login/signup/forgot-password
+  - Tabs: تسجيل الدخول, إنشاء حساب
+  - Login form: email + password with show/hide toggle, submit via useAuth().login()
+  - Google login button with SVG icon via useAuth().loginWithGoogle()
+  - Inline forgot password (expands in place) via useAuth().resetPassword()
+  - Signup form: fullName, username, email, password, confirm password, validation
+  - Error handling with Arabic messages for Firebase auth errors
+  - AT logo at top (img tag /at-icon.png)
+- Created home-view.tsx with real-time Firebase feed
+  - Header: "الرئيسية" title
+  - Compose area (click → setComposeOpen(true))
+  - Tabs: "لك" (following) / "الكل" (all)
+  - Real-time feed via onValue on posts/ node ordered by timestamp
+  - Follows fetched from `follows/{userId}` for filtering
+  - Author data fetched for each post from `users/{userId}`
+  - IntersectionObserver infinite scroll (loads 15 more on scroll)
+  - Loading skeletons, empty state
+- Created profile-view.tsx with user info and posts
+  - Banner (base64 or gradient fallback), avatar (base64 or initial)
+  - Name, username, verified badge, bio, join date
+  - Stats: posts, followers, following (clickable → setUserList → navigate('user-list'))
+  - Edit profile button (own) / Follow/Unfollow + Message buttons (others)
+  - Follow/unfollow with Firebase set/remove + count updates
+  - User's posts list (real-time via orderByChild('userId') query)
+  - Back button on mobile when viewing other user
+- Created edit-profile-view.tsx with base64 uploads
+  - Banner upload (file input → base64, preview with remove)
+  - Avatar upload (file input → base64, preview, hover camera overlay)
+  - Full name, username, bio fields
+  - Pre-filled from userData via useAuth()
+  - Save via Firebase update to `users/{uid}`
+  - Back button
+- Created post-detail-view.tsx with real-time comments
+  - Full post display via PostCard component
+  - Real-time comments via onValue on `comments/` ordered by postId
+  - Comment input with optional image (file → base64)
+  - Like/unlike comments via `commentLikes/` node
+  - Comment count auto-incremented
+  - Author data fetched for comments
+  - Back button, uses selectedPostId from store
+- Created user-list-view.tsx for followers/following
+  - Header: "المتابِعون" or "يُتابِع" based on userListType
+  - For following: reads `follows/{userId}` keys
+  - For followers: reads `followers/{userId}` node
+  - Lists users with avatar, name, verified badge, follow/unfollow button
+  - Follow actions update both `follows/` and `followers/` + count updates
+  - Back button, loading skeletons, empty state
+- Created explore-view.tsx with search and trending
+  - Search bar at top, form submit → setSearchQuery → navigate('search-results')
+  - Trending topics: extracted from last 100 posts, sorted by frequency
+  - Suggested users: users not followed by current user (max 5)
+  - Follow/unfollow for suggested users
+  - Click hashtag → search, click user → profile
+- Created search-results-view.tsx
+  - Tabs: المنشورات, الأشخاص
+  - People tab: search users by username/fullName via Firebase
+  - Posts tab: search posts by content (case insensitive), hashtag search
+  - Follow/unfollow for people results
+  - Back button, loading skeletons, empty states
+- Created bookmarks-view.tsx
+  - Header: "الإشعارات المحفوظة"
+  - Real-time bookmarks via onValue on `bookmarks/{userId}`
+  - Fetches each bookmarked post from `posts/{postId}`
+  - Skips deleted posts, sorted by timestamp desc
+  - Author data fetched for display
+  - Empty state with bookmark icon
+- Created settings-view.tsx
+  - Appearance: dark/light toggle via next-themes
+  - Privacy: private account toggle via Firebase update
+  - Notification preferences: toggles for likes, retweets, comments, follows
+  - Language: Arabic (display only)
+  - Account: delete account (placeholder), logout button
+  - App info: version 1.0.0
+  - Back button
+- Updated page.tsx to use new auth/store API
+  - Replaced useAuth() destructuring: user/userData instead of session
+  - Removed ViewType import (uses AppView from types)
+  - Removed login/signup/forgot-password auth view routing (handled by AuthView tabs)
+  - Clean view routing switch for all AppView types
+  - Fixed layout: Sidebar + main content + BottomNav + CreatePostDialog
+
+Stage Summary:
+- All 14 user-facing files rewritten with Firebase Realtime Database integration
+- All Firebase listeners properly cleaned up on unmount via off()
+- RTL Arabic layout, dark theme, mobile-first responsive
+- Real-time subscriptions for posts, comments, likes, bookmarks, follows
+- Base64 image handling throughout (avatar, banner, post images, comment images)
+- Optimistic UI for likes/reposts with rollback on error
+- Next.js build passes successfully
+- Zero TypeScript errors in modified files (verified via tsc --noEmit)

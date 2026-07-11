@@ -1,114 +1,84 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { Switch } from '@/components/ui/switch';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAppStore } from '@/store/app-store';
-import { ArrowRight, Camera } from 'lucide-react';
+import { ArrowRight, Camera, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { ref, update } from 'firebase/database';
+import { db } from '@/lib/firebase';
 
-interface ProfileFormData {
-  fullName: string;
-  username: string;
-  bio: string;
-  location: string;
-  website: string;
-  profileImageUrl: string;
-  bannerImageUrl: string;
-  isPrivate: boolean;
-}
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 
 export function EditProfileView() {
   const { goBack } = useAppStore();
-  const { session } = useAuth();
-  const userId = session?.user?.id;
+  const { user, userData } = useAuth();
+  const userId = user?.uid;
 
-  const [form, setForm] = useState<ProfileFormData>({
-    fullName: '',
-    username: '',
-    bio: '',
-    location: '',
-    website: '',
-    profileImageUrl: '',
-    bannerImageUrl: '',
-    isPrivate: false,
-  });
-  const [isLoading, setIsLoading] = useState(true);
+  const [fullName, setFullName] = useState(userData?.fullName || '');
+  const [username, setUsername] = useState(userData?.username || '');
+  const [bio, setBio] = useState(userData?.bio || '');
+  const [avatarBase64, setAvatarBase64] = useState(userData?.avatarBase64 || '');
+  const [bannerBase64, setBannerBase64] = useState(userData?.bannerBase64 || '');
   const [isSaving, setIsSaving] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (!userId) return;
-    async function fetchProfile() {
-      setIsLoading(true);
-      try {
-        const res = await fetch(`/api/users/${userId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setForm({
-            fullName: data.fullName || '',
-            username: data.username || '',
-            bio: data.bio || '',
-            location: data.location || '',
-            website: data.website || '',
-            profileImageUrl: data.profileImageUrl || '',
-            bannerImageUrl: data.bannerImageUrl || '',
-            isPrivate: data.isPrivate || false,
-          });
-        }
-      } catch {
-        // ignore
-      } finally {
-        setIsLoading(false);
-      }
+  const handleImageChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    field: 'avatar' | 'banner'
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > MAX_IMAGE_SIZE) {
+      toast.error('حجم الصورة يجب أن يكون أقل من 5 ميجابايت');
+      return;
     }
-    fetchProfile();
-  }, [userId]);
 
-  const updateField = (field: keyof ProfileFormData, value: string | boolean) => {
-    setForm((prev) => ({ ...prev, [field]: value }));
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      const base64 = result.split(',')[1] || '';
+      if (field === 'avatar') {
+        setAvatarBase64(base64);
+      } else {
+        setBannerBase64(base64);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleSave = async () => {
-    if (!form.username.trim()) {
+    if (!userId) return;
+    if (!username.trim()) {
       toast.error('اسم المستخدم مطلوب');
       return;
     }
+
     setIsSaving(true);
     try {
-      const res = await fetch('/api/users/profile', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      await update(ref(db, `users/${userId}`), {
+        fullName: fullName.trim(),
+        username: username.trim(),
+        bio: bio.trim(),
+        avatarBase64,
+        bannerBase64,
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'فشل في تحديث الملف');
-      }
       toast.success('تم تحديث الملف الشخصي');
       goBack();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'حدث خطأ');
+    } catch {
+      toast.error('حدث خطأ أثناء التحديث');
     } finally {
       setIsSaving(false);
     }
   };
-
-  if (isLoading) {
-    return (
-      <div className="p-4 space-y-4">
-        <Skeleton className="h-6 w-32" />
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-10 w-full" />
-        <Skeleton className="h-24 w-full" />
-      </div>
-    );
-  }
 
   return (
     <div className="px-4 py-4">
@@ -122,24 +92,75 @@ export function EditProfileView() {
 
       {/* Banner Preview */}
       <div className="relative rounded-2xl overflow-hidden mb-4">
-        {form.bannerImageUrl ? (
-          <img src={form.bannerImageUrl} alt="الغلاف" className="w-full h-32 object-cover" />
+        {bannerBase64 ? (
+          <img
+            src={`data:image/jpeg;base64,${bannerBase64}`}
+            alt="الغلاف"
+            className="w-full h-32 object-cover"
+          />
         ) : (
-          <div className="w-full h-32 bg-muted flex items-center justify-center">
+          <div className="w-full h-32 bg-gradient-to-br from-rose-900/40 via-background to-amber-900/30 flex items-center justify-center">
             <Camera className="h-8 w-8 text-muted-foreground/40" />
           </div>
+        )}
+        <input
+          ref={bannerInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => handleImageChange(e, 'banner')}
+        />
+        <Button
+          variant="secondary"
+          size="icon"
+          className="absolute bottom-2 left-2 h-8 w-8 rounded-full bg-black/60 hover:bg-black/80"
+          onClick={() => bannerInputRef.current?.click()}
+        >
+          <Camera className="h-4 w-4" />
+        </Button>
+        {bannerBase64 && (
+          <Button
+            variant="secondary"
+            size="icon"
+            className="absolute top-2 left-2 h-7 w-7 rounded-full bg-black/60 hover:bg-black/80"
+            onClick={() => setBannerBase64('')}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
         )}
       </div>
 
       {/* Profile Picture */}
       <div className="flex justify-center -mt-12 mb-6 relative z-10">
-        <div className="relative">
-          <Avatar className="h-24 w-24 border-4 border-background">
-            <AvatarImage src={form.profileImageUrl} alt={form.fullName} />
-            <AvatarFallback className="bg-primary/20 text-primary text-2xl">
-              {form.fullName?.charAt(0) || 'م'}
-            </AvatarFallback>
-          </Avatar>
+        <div className="relative group">
+          <div className="h-24 w-24 border-4 border-background rounded-full overflow-hidden">
+            {avatarBase64 ? (
+              <img
+                src={`data:image/jpeg;base64,${avatarBase64}`}
+                alt={fullName}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="h-full w-full bg-primary/20 flex items-center justify-center text-primary text-2xl font-bold">
+                {fullName?.charAt(0) || 'م'}
+              </div>
+            )}
+          </div>
+          <input
+            ref={avatarInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleImageChange(e, 'avatar')}
+          />
+          <Button
+            variant="secondary"
+            size="icon"
+            className="absolute bottom-0 left-0 h-8 w-8 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 opacity-0 group-hover:opacity-100 transition-opacity"
+            onClick={() => avatarInputRef.current?.click()}
+          >
+            <Camera className="h-4 w-4" />
+          </Button>
         </div>
       </div>
 
@@ -149,8 +170,8 @@ export function EditProfileView() {
           <Label htmlFor="edit-name">الاسم الكامل</Label>
           <Input
             id="edit-name"
-            value={form.fullName}
-            onChange={(e) => updateField('fullName', e.target.value)}
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
             placeholder="أحمد محمد"
           />
         </div>
@@ -159,8 +180,8 @@ export function EditProfileView() {
           <Label htmlFor="edit-username">اسم المستخدم</Label>
           <Input
             id="edit-username"
-            value={form.username}
-            onChange={(e) => updateField('username', e.target.value.replace('@', ''))}
+            value={username}
+            onChange={(e) => setUsername(e.target.value.replace('@', ''))}
             placeholder="username"
             dir="ltr"
           />
@@ -170,67 +191,11 @@ export function EditProfileView() {
           <Label htmlFor="edit-bio">النبذة التعريفية</Label>
           <Textarea
             id="edit-bio"
-            value={form.bio}
-            onChange={(e) => updateField('bio', e.target.value)}
+            value={bio}
+            onChange={(e) => setBio(e.target.value)}
             placeholder="اكتب نبذة عن نفسك..."
             className="min-h-[80px] resize-none"
             dir="rtl"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="edit-location">الموقع</Label>
-          <Input
-            id="edit-location"
-            value={form.location}
-            onChange={(e) => updateField('location', e.target.value)}
-            placeholder="عدن، اليمن"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="edit-website">الموقع الإلكتروني</Label>
-          <Input
-            id="edit-website"
-            value={form.website}
-            onChange={(e) => updateField('website', e.target.value)}
-            placeholder="https://example.com"
-            dir="ltr"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="edit-avatar">رابط صورة الملف الشخصي</Label>
-          <Input
-            id="edit-avatar"
-            value={form.profileImageUrl}
-            onChange={(e) => updateField('profileImageUrl', e.target.value)}
-            placeholder="https://example.com/avatar.jpg"
-            dir="ltr"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="edit-banner">رابط صورة الغلاف</Label>
-          <Input
-            id="edit-banner"
-            value={form.bannerImageUrl}
-            onChange={(e) => updateField('bannerImageUrl', e.target.value)}
-            placeholder="https://example.com/banner.jpg"
-            dir="ltr"
-          />
-        </div>
-
-        <div className="flex items-center justify-between py-2">
-          <div>
-            <Label>حساب خاص</Label>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              فقط المتابعون يمكنهم رؤية منشوراتك
-            </p>
-          </div>
-          <Switch
-            checked={form.isPrivate}
-            onCheckedChange={(checked) => updateField('isPrivate', checked)}
           />
         </div>
 

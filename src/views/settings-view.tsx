@@ -4,41 +4,47 @@ import { useAuth } from '@/lib/auth-context';
 import { useTheme } from 'next-themes';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAppStore } from '@/store/app-store';
 import {
   ArrowRight,
   Moon,
   Sun,
-  Bell,
   Lock,
   Trash2,
   Info,
+  LogOut,
+  Bell,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useState, useEffect } from 'react';
+import { ref, update, get } from 'firebase/database';
+import { db } from '@/lib/firebase';
 
 export function SettingsView() {
   const { goBack } = useAppStore();
-  const { session } = useAuth();
+  const { user, userData, logout } = useAuth();
   const { theme, setTheme } = useTheme();
-  const userId = session?.user?.id;
+  const userId = user?.uid;
 
-  const [isPrivate, setIsPrivate] = useState(false);
+  const [isPrivate, setIsPrivate] = useState(userData?.isPrivate || false);
   const [notifLikes, setNotifLikes] = useState(true);
   const [notifRetweets, setNotifRetweets] = useState(true);
   const [notifFollows, setNotifFollows] = useState(true);
+  const [notifComments, setNotifComments] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!userId) return;
+    if (!userId) {
+      setIsLoading(false);
+      return;
+    }
     async function fetchSettings() {
       setIsLoading(true);
       try {
-        const res = await fetch(`/api/users/${userId}`);
-        if (res.ok) {
-          const data = await res.json();
+        const snap = await get(ref(db, `users/${userId}`));
+        if (snap.exists()) {
+          const data = snap.val();
           setIsPrivate(data.isPrivate || false);
         }
       } catch {
@@ -51,18 +57,28 @@ export function SettingsView() {
   }, [userId]);
 
   const togglePrivate = async (value: boolean) => {
+    if (!userId) return;
     setIsPrivate(value);
     try {
-      await fetch('/api/users/profile', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ isPrivate: value }),
-      });
+      await update(ref(db, `users/${userId}`), { isPrivate: value });
       toast.success(value ? 'تم تفعيل الحساب الخاص' : 'تم تعطيل الحساب الخاص');
     } catch {
       setIsPrivate(!value);
       toast.error('فشل في تحديث الإعدادات');
     }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      toast.success('تم تسجيل الخروج');
+    } catch {
+      toast.error('حدث خطأ');
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    toast.info('هذه الميزة غير متاحة في النسخة الحالية');
   };
 
   if (isLoading) {
@@ -150,6 +166,15 @@ export function SettingsView() {
             </div>
             <div className="flex items-center justify-between py-2">
               <div>
+                <p className="text-sm font-medium">التعليقات</p>
+                <p className="text-xs text-muted-foreground">
+                  إشعار عند تعليق شخص على تغريدتك
+                </p>
+              </div>
+              <Switch checked={notifComments} onCheckedChange={setNotifComments} />
+            </div>
+            <div className="flex items-center justify-between py-2">
+              <div>
                 <p className="text-sm font-medium">المتابِعون الجدد</p>
                 <p className="text-xs text-muted-foreground">
                   إشعار عند بدء شخص بمتابعتك
@@ -160,16 +185,33 @@ export function SettingsView() {
           </div>
         </section>
 
+        {/* Language */}
+        <section className="p-4">
+          <h2 className="text-base font-bold mb-3">اللغة</h2>
+          <div className="flex items-center justify-between py-2">
+            <p className="text-sm">العربية</p>
+            <span className="text-sm text-muted-foreground">اللغة الحالية</span>
+          </div>
+        </section>
+
         {/* Account */}
         <section className="p-4">
           <h2 className="text-base font-bold mb-3">الحساب</h2>
           <Button
             variant="ghost"
             className="w-full justify-start gap-3 h-12 text-rose-500 hover:text-rose-500 hover:bg-rose-500/10 rounded-xl"
-            onClick={() => toast.info('هذه الميزة غير متاحة في النسخة التجريبية')}
+            onClick={handleDeleteAccount}
           >
             <Trash2 className="h-5 w-5" />
-            <span>تعطيل الحساب</span>
+            <span>حذف الحساب</span>
+          </Button>
+          <Button
+            variant="ghost"
+            className="w-full justify-start gap-3 h-12 text-muted-foreground hover:text-foreground hover:bg-accent/50 rounded-xl mt-1"
+            onClick={handleLogout}
+          >
+            <LogOut className="h-5 w-5" />
+            <span>تسجيل الخروج</span>
           </Button>
         </section>
 

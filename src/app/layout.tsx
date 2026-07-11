@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Noto_Sans_Arabic } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
@@ -11,10 +11,20 @@ const notoArabic = Noto_Sans_Arabic({
 
 export const metadata: Metadata = {
   title: "عدن تويتر - AdenTweets",
-  description: "منصة التواصل الاجتماعي العربية",
+  description: "منصة التواصل الاجتماعي العربية | Arabic Social Media Platform",
   icons: {
-    icon: "/logo.svg",
+    icon: "/at-icon.png",
+    apple: "/at-icon.png",
   },
+  manifest: "/manifest.json",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  themeColor: "#000000",
 };
 
 export default function RootLayout({
