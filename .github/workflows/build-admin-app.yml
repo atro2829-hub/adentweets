@@ -50,11 +50,11 @@ jobs:
         env:
           NEXT_PUBLIC_APP_MODE: admin
 
-      - name: Setup Java 17
+      - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '17'
+          java-version: '21'
 
       - name: Add & Sync Android platform
         run: |
