@@ -1,289 +1,380 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Skeleton } from '@/components/ui/skeleton';
-import { Button } from '@/components/ui/button';
-import { PostCard } from '@/components/tweets/post-card';
-import { useAppStore } from '@/store/app-store';
+import { useState, useEffect, useRef, useCallback, FormEvent } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { ArrowRight, Search, Users, BadgeCheck } from 'lucide-react';
-import { toast } from 'sonner';
-import type { PostData, UserData } from '@/lib/types';
+import { useAppStore } from '@/store/app-store';
+import { PostCard } from '@/components/tweets/post-card';
+import { VerificationBadge } from '@/components/layout/verification-badge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import {
+  ArrowRight,
+  Search,
+  Users,
+  FileText,
+  UserPlus,
+  UserMinus,
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   ref,
   get,
   set,
   remove,
-  update,
   onValue,
   off,
   query,
   orderByChild,
+  startAt,
+  endAt,
   limitToLast,
-  equalTo,
+  update,
 } from 'firebase/database';
 import { db } from '@/lib/firebase';
+import { toast } from 'sonner';
+import type { PostData, UserData } from '@/lib/types';
+
+type SearchTab = 'people' | 'posts';
 
 export function SearchResultsView() {
-  const { searchQuery, goBack, setViewParams } = useAppStore();
-  const [tab, setTab] = useState<'الأشخاص' | 'المنشورات'>('المنشورات');
-  const [posts, setPosts] = useState<(PostData & { author: UserData | null })[]>([]);
-  const [users, setUsers] = useState<{ uid: string; data: UserData; isFollowing: boolean }[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [followLoading, setFollowLoading] = useState<string | null>(null);
-  const [authors, setAuthors] = useState<Record<string, UserData>>({});
   const { user } = useAuth();
-  const currentUserId = user?.uid;
+  const userId = user?.uid || null;
+  const { searchQuery, setSearchQuery, navigate, goBack, setViewParams } = useAppStore();
 
-  const fetchResults = useCallback(async () => {
-    if (!searchQuery) return;
-    setIsLoading(true);
+  const [inputValue, setInputValue] = useState(searchQuery || '');
+  const [activeTab, setActiveTab] = useState<SearchTab>('people');
+  const [peopleResults, setPeopleResults] = useState<{ user: UserData; uid: string; isFollowing: boolean }[]>([]);
+  const [postResults, setPostResults] = useState<PostData[]>([]);
+  const [postAuthors, setPostAuthors] = useState<Record<string, UserData>>({});
+  const [loading, setLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
 
-    try {
-      if (tab === 'الأشخاص') {
-        // Search users by username or fullName
-        const usersSnap = await get(ref(db, 'users'));
-        if (usersSnap.exists()) {
-          const allUsers = usersSnap.val();
-          const q = searchQuery.toLowerCase();
-          const matched: { uid: string; data: UserData; isFollowing: boolean }[] = [];
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
 
-          for (const [uid, uData] of Object.entries(allUsers)) {
-            const userData = uData as UserData;
-            if (
-              userData.username?.toLowerCase().includes(q) ||
-              userData.fullName?.toLowerCase().includes(q)
-            ) {
-              let isFollowing = false;
-              if (currentUserId) {
-                const fSnap = await get(ref(db, `follows/${currentUserId}/${uid}`));
-                isFollowing = !!fSnap.val();
-              }
-              matched.push({ uid, data: userData, isFollowing });
-            }
-          }
-          setUsers(matched);
-        }
-      } else {
-        // Search posts by content
-        const postsQuery = query(
-          ref(db, 'posts'),
-          orderByChild('timestamp'),
-          limitToLast(200)
-        );
-        const snap = await get(postsQuery);
-        if (snap.exists()) {
-          const data = snap.val();
-          const q = searchQuery.toLowerCase();
-          const matchedPosts: (PostData & { author: UserData | null })[] = [];
-
-          const postEntries = Object.entries(data).filter(([, p]) => {
-            const post = p as PostData;
-            return !post.isDeleted && post.content?.toLowerCase().includes(q);
-          });
-
-          // Also check if searching for hashtag
-          const isHashtag = searchQuery.startsWith('#');
-
-          for (const [id, p] of postEntries) {
-            const post = p as PostData;
-            if (isHashtag) {
-              if (post.content.includes(searchQuery)) {
-                matchedPosts.push({ ...post, id, author: null });
-              }
-            } else {
-              matchedPosts.push({ ...post, id, author: null });
-            }
-          }
-
-          matchedPosts.sort((a, b) => b.timestamp - a.timestamp);
-          setPosts(matchedPosts);
-
-          // Fetch authors
-          const authorIds = [...new Set(matchedPosts.map((p) => p.userId))];
-          const newAuthors: Record<string, UserData> = {};
-          for (const aid of authorIds) {
-            const aSnap = await get(ref(db, `users/${aid}`));
-            if (aSnap.exists()) {
-              newAuthors[aid] = aSnap.val();
-            }
-          }
-          setAuthors(newAuthors);
-        }
-      }
-    } catch {
-      // empty
-    } finally {
-      setIsLoading(false);
-    }
-  }, [searchQuery, tab, currentUserId]);
-
+  // Sync searchQuery from store
   useEffect(() => {
-    fetchResults();
-  }, [fetchResults]);
+    setInputValue(searchQuery);
+  }, [searchQuery]);
 
-  const handleFollow = async (targetUid: string) => {
-    if (!currentUserId || followLoading) return;
-    setFollowLoading(targetUid);
-    try {
-      const followRef = ref(db, `follows/${currentUserId}/${targetUid}`);
-      const followerRef = ref(db, `followers/${targetUid}/${currentUserId}`);
-      const existing = await get(followRef);
-
-      if (existing.exists()) {
-        await remove(followRef);
-        await remove(followerRef);
-      } else {
-        await set(followRef, Date.now());
-        await set(followerRef, Date.now());
+  // Perform search with debounce
+  const performSearch = useCallback(
+    async (queryText: string) => {
+      if (!queryText.trim()) {
+        setPeopleResults([]);
+        setPostResults([]);
+        setHasSearched(false);
+        return;
       }
 
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.uid === targetUid ? { ...u, isFollowing: !u.isFollowing } : u
-        )
-      );
+      setLoading(true);
+      setHasSearched(true);
+
+      try {
+        // Search people by username (starts with query)
+        const usersSnap = await get(ref(db, 'users'));
+        const matchedUsers: { user: UserData; uid: string }[] = [];
+
+        if (usersSnap.exists()) {
+          const data = usersSnap.val() as Record<string, UserData>;
+          const q = queryText.toLowerCase();
+
+          Object.entries(data).forEach(([uid, u]) => {
+            if (
+              !u.isSuspended &&
+              (u.fullName?.toLowerCase().includes(q) ||
+                u.username?.toLowerCase().includes(q))
+            ) {
+              matchedUsers.push({ user: u, uid });
+            }
+          });
+        }
+
+        // Check follow status for each
+        const peopleWithFollow = await Promise.all(
+          matchedUsers.slice(0, 20).map(async ({ user, uid }) => {
+            let isFollowing = false;
+            if (userId) {
+              const followSnap = await get(ref(db, `follows/${userId}/${uid}`));
+              isFollowing = !!followSnap.val();
+            }
+            return { user, uid, isFollowing };
+          })
+        );
+
+        setPeopleResults(peopleWithFollow);
+
+        // Search posts by content (client-side)
+        const postsSnap = await get(query(ref(db, 'posts'), orderByChild('timestamp'), limitToLast(100)));
+        const matchedPosts: PostData[] = [];
+        const authorMap: Record<string, UserData> = {};
+
+        if (postsSnap.exists()) {
+          const data = postsSnap.val() as Record<string, PostData>;
+          const q = queryText.toLowerCase();
+
+          Object.values(data).forEach((p) => {
+            if (
+              !p.isDeleted &&
+              p.content?.toLowerCase().includes(q)
+            ) {
+              matchedPosts.push(p);
+            }
+          });
+        }
+
+        matchedPosts.sort((a, b) => b.timestamp - a.timestamp);
+
+        // Fetch authors for posts
+        const authorIds = [...new Set(matchedPosts.map((p) => p.userId))];
+        await Promise.all(
+          authorIds.map(async (uid) => {
+            try {
+              const s = await get(ref(db, `users/${uid}`));
+              if (s.exists()) authorMap[uid] = s.val() as UserData;
+            } catch { /* ignore */ }
+          })
+        );
+
+        setPostResults(matchedPosts.slice(0, 30));
+        setPostAuthors(authorMap);
+      } catch {
+        // Silently fail
+      }
+
+      setLoading(false);
+    },
+    [userId]
+  );
+
+  // Debounced search
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      performSearch(inputValue);
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [inputValue, performSearch]);
+
+  const handleSearch = (e: FormEvent) => {
+    e.preventDefault();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    performSearch(inputValue);
+  };
+
+  const handleFollow = async (targetUid: string, index: number) => {
+    if (!userId) return;
+    const wasFollowing = peopleResults[index].isFollowing;
+
+    setPeopleResults((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, isFollowing: !wasFollowing } : item))
+    );
+
+    try {
+      if (wasFollowing) {
+        await remove(ref(db, `follows/${userId}/${targetUid}`));
+        await remove(ref(db, `followers/${targetUid}/${userId}`));
+        const fSnap = await get(ref(db, `users/${userId}/followingCount`));
+        const rSnap = await get(ref(db, `users/${targetUid}/followersCount`));
+        await update(ref(db, `users/${userId}`), { followingCount: Math.max(0, (fSnap.val() || 0) - 1) });
+        await update(ref(db, `users/${targetUid}`), { followersCount: Math.max(0, (rSnap.val() || 0) - 1) });
+      } else {
+        await set(ref(db, `follows/${userId}/${targetUid}`), true);
+        await set(ref(db, `followers/${targetUid}/${userId}`), true);
+        const fSnap = await get(ref(db, `users/${userId}/followingCount`));
+        const rSnap = await get(ref(db, `users/${targetUid}/followersCount`));
+        await update(ref(db, `users/${userId}`), { followingCount: (fSnap.val() || 0) + 1 });
+        await update(ref(db, `users/${targetUid}`), { followersCount: (rSnap.val() || 0) + 1 });
+      }
     } catch {
+      setPeopleResults((prev) =>
+        prev.map((item, i) => (i === index ? { ...item, isFollowing: wasFollowing } : item))
+      );
       toast.error('حدث خطأ');
-    } finally {
-      setFollowLoading(null);
     }
   };
 
+  const noResults = hasSearched && !loading && peopleResults.length === 0 && postResults.length === 0;
+
   return (
-    <div>
+    <div className="min-h-screen">
       {/* Header */}
-      <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b border-border/50 px-4 py-3 flex items-center gap-3">
-        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={goBack}>
-          <ArrowRight className="h-5 w-5" />
-        </Button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-bold truncate">{searchQuery}</h1>
+      <div className="sticky top-0 z-30 bg-background/80 backdrop-blur-xl border-b border-border/50">
+        <div className="flex items-center gap-2 px-2 py-2">
+          <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0" onClick={goBack}>
+            <ArrowRight className="h-5 w-5" />
+          </Button>
+          <form onSubmit={handleSearch} className="flex-1">
+            <div className="relative">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <Input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder="ابحث..."
+                className="h-9 rounded-full pr-9 pl-4 bg-muted/50 text-sm"
+                dir="rtl"
+                autoFocus
+              />
+            </div>
+          </form>
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div className="sticky top-[57px] z-30 bg-background/95 backdrop-blur-sm border-b border-border/50">
-        <Tabs value={tab} onValueChange={(v) => setTab(v as 'الأشخاص' | 'المنشورات')} className="w-full">
-          <TabsList className="w-full h-12 bg-transparent p-0">
-            <TabsTrigger
-              value="المنشورات"
-              className="flex-1 h-full rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-            >
-              المنشورات
-            </TabsTrigger>
-            <TabsTrigger
-              value="الأشخاص"
-              className="flex-1 h-full rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none"
-            >
+        {/* Tabs */}
+        <div className="flex relative">
+          <button
+            onClick={() => setActiveTab('people')}
+            className="flex-1 py-3 text-center text-sm font-medium transition-colors"
+          >
+            <span className={activeTab === 'people' ? 'font-bold text-foreground' : 'text-muted-foreground'}>
               الأشخاص
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
+            </span>
+            {activeTab === 'people' && (
+              <motion.div
+                layoutId="search-tab-indicator"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-sky-500"
+                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              />
+            )}
+          </button>
+          <button
+            onClick={() => setActiveTab('posts')}
+            className="flex-1 py-3 text-center text-sm font-medium transition-colors"
+          >
+            <span className={activeTab === 'posts' ? 'font-bold text-foreground' : 'text-muted-foreground'}>
+              التغريدات
+            </span>
+            {activeTab === 'posts' && (
+              <motion.div
+                layoutId="search-tab-indicator"
+                className="absolute bottom-0 left-0 right-0 h-0.5 bg-sky-500"
+                transition={{ type: 'spring', stiffness: 500, damping: 35 }}
+              />
+            )}
+          </button>
+        </div>
       </div>
 
-      {/* Content */}
-      {isLoading ? (
-        <div>
-          {tab === 'الأشخاص' ? (
-            Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-3 border-b border-border/50">
-                <Skeleton className="h-10 w-10 rounded-full" />
-                <div className="flex-1 space-y-1">
-                  <Skeleton className="h-4 w-28" />
-                  <Skeleton className="h-3 w-16" />
-                </div>
-                <Skeleton className="h-8 w-20 rounded-full" />
+      {/* Loading */}
+      {loading && (
+        <div className="space-y-3 p-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3">
+              <Skeleton className="h-11 w-11 rounded-full" />
+              <div className="flex-1 space-y-1.5">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-3 w-20" />
+                <Skeleton className="h-3 w-44" />
               </div>
-            ))
-          ) : (
-            Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="border-b border-border/50 px-4 py-3">
-                <div className="flex gap-3">
-                  <Skeleton className="h-10 w-10 rounded-full" />
-                  <div className="flex-1 space-y-2">
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-12 w-full" />
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
+              <Skeleton className="h-8 w-20 rounded-full" />
+            </div>
+          ))}
         </div>
-      ) : tab === 'الأشخاص' ? (
-        users.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-            <Users className="h-12 w-12 text-muted-foreground/40 mb-4" />
-            <p className="text-sm text-muted-foreground">لم يتم العثور على أشخاص</p>
-          </div>
-        ) : (
-          users.map((u) => (
-            <div
-              key={u.uid}
-              className="flex items-center gap-3 px-4 py-3 border-b border-border/50 hover:bg-accent/50 transition-colors"
-            >
-              <button
-                className="shrink-0"
-                onClick={() => {
-                  setViewParams({ userId: u.uid });
-                  useAppStore.getState().navigate('profile');
-                }}
+      )}
+
+      {/* No results */}
+      {noResults && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex flex-col items-center justify-center py-20 text-center"
+        >
+          <Search className="h-12 w-12 text-muted-foreground/30 mb-4" />
+          <h3 className="text-lg font-bold mb-1">لا توجد نتائج</h3>
+          <p className="text-muted-foreground text-sm">حاول البحث بكلمات مختلفة</p>
+        </motion.div>
+      )}
+
+      {/* People Tab */}
+      {!loading && activeTab === 'people' && (
+        <AnimatePresence>
+          {peopleResults.length > 0 ? (
+            peopleResults.map((item, index) => (
+              <motion.div
+                key={item.uid}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                transition={{ delay: index * 0.03 }}
+                className="flex items-center gap-3 px-4 py-3 hover:bg-accent/30 transition-colors"
               >
-                {u.data.avatarBase64 ? (
-                  <img
-                    src={`data:image/jpeg;base64,${u.data.avatarBase64}`}
-                    alt={u.data.fullName}
-                    className="h-10 w-10 rounded-full object-cover"
-                  />
-                ) : (
-                  <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary text-sm font-bold">
-                    {u.data.fullName?.charAt(0) || 'م'}
+                <button
+                  className="shrink-0"
+                  onClick={() => {
+                    setViewParams({ userId: item.uid });
+                    navigate('profile');
+                  }}
+                >
+                  {item.user.avatarBase64 ? (
+                    <img
+                      src={`data:image/jpeg;base64,${item.user.avatarBase64}`}
+                      alt={item.user.fullName}
+                      className="h-11 w-11 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className="h-11 w-11 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                      {item.user.fullName?.charAt(0) || 'م'}
+                    </div>
+                  )}
+                </button>
+
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1">
+                    <span className="font-bold text-sm truncate">{item.user.fullName}</span>
+                    <VerificationBadge type={item.user.verificationType || 'none'} size="sm" />
                   </div>
-                )}
-              </button>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1">
-                  <p
-                    className="font-bold text-sm truncate hover:underline cursor-pointer"
-                    onClick={() => {
-                      setViewParams({ userId: u.uid });
-                      useAppStore.getState().navigate('profile');
-                    }}
-                  >
-                    {u.data.fullName}
-                  </p>
-                  {u.data.isVerified && (
-                    <BadgeCheck className="h-4 w-4 text-rose-400 fill-rose-400 shrink-0" />
+                  <p className="text-muted-foreground text-xs truncate">@{item.user.username}</p>
+                  {item.user.bio && (
+                    <p className="text-sm text-muted-foreground truncate mt-0.5">{item.user.bio}</p>
                   )}
                 </div>
-                <p className="text-sm text-muted-foreground truncate">@{u.data.username}</p>
-              </div>
-              <Button
-                variant={u.isFollowing ? 'outline' : 'default'}
-                size="sm"
-                className="rounded-full h-8 px-4 text-sm shrink-0"
-                disabled={followLoading === u.uid}
-                onClick={() => handleFollow(u.uid)}
-              >
-                {u.isFollowing ? 'إلغاء المتابعة' : 'متابعة'}
-              </Button>
-            </div>
-          ))
-        )
-      ) : posts.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-          <Search className="h-12 w-12 text-muted-foreground/40 mb-4" />
-          <p className="text-sm text-muted-foreground">لم يتم العثور على نتائج</p>
-        </div>
-      ) : (
-        posts.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            author={authors[post.userId] || null}
-          />
-        ))
+
+                <motion.div whileTap={{ scale: 0.95 }}>
+                  <Button
+                    variant={item.isFollowing ? 'outline' : 'default'}
+                    size="sm"
+                    className="rounded-full text-xs h-8 px-3 shrink-0"
+                    onClick={() => handleFollow(item.uid, index)}
+                    disabled={item.uid === userId}
+                  >
+                    {item.isFollowing ? (
+                      <>
+                        <UserMinus className="h-3.5 w-3.5 ml-1" />
+                        إلغاء
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="h-3.5 w-3.5 ml-1" />
+                        متابعة
+                      </>
+                    )}
+                  </Button>
+                </motion.div>
+              </motion.div>
+            ))
+          ) : hasSearched ? null : null}
+        </AnimatePresence>
+      )}
+
+      {/* Posts Tab */}
+      {!loading && activeTab === 'posts' && (
+        <AnimatePresence>
+          {postResults.length > 0
+            ? postResults.map((post) => (
+                <motion.div
+                  key={post.id}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <PostCard post={post} author={postAuthors[post.userId] || null} />
+                </motion.div>
+              ))
+            : hasSearched
+            ? null
+            : null}
+        </AnimatePresence>
       )}
     </div>
   );

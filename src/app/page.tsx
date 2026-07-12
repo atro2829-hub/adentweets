@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { useAppStore } from '@/store/app-store';
-import { Sidebar } from '@/components/layout/sidebar';
+import { Sidebar, MobileSidebarSheet, MobileSidebarTrigger } from '@/components/layout/sidebar';
 import { BottomNav } from '@/components/layout/bottom-nav';
 import { CreatePostDialog } from '@/components/tweets/create-post-dialog';
 import { AuthView } from '@/views/auth-view';
@@ -107,7 +107,8 @@ function AppShell() {
   return (
     <div className="min-h-screen flex" dir="rtl">
       <Sidebar />
-      <main className="flex-1 min-w-0 max-w-[600px] mx-auto w-full border-x border-border/30 lg:pb-0 pb-16">
+      <MobileSidebarSheet />
+      <main className="flex-1 min-w-0 max-w-[600px] mx-auto w-full border-x border-border/30 lg:pb-0 pb-20">
         {renderView()}
       </main>
       <div className="hidden xl:block w-80 shrink-0" />

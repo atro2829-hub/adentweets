@@ -1,409 +1,363 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, off } from 'firebase/database';
-import { db } from '@/lib/firebase';
-import { useAppStore } from '@/store/app-store';
-import { useAuth } from '@/lib/auth-context';
-import { Button } from '@/components/ui/button';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { motion } from 'framer-motion';
+import { Users, FileText, MessageSquare, Heart, TrendingUp, Crown } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AdminNav } from '@/components/layout/admin-nav';
+import { formatNumber } from '@/lib/utils';
+import { ref, onValue, off, get } from 'firebase/database';
+import { db } from '@/lib/firebase';
+import type { UserData, PostData, CommentData } from '@/lib/types';
 import {
-  Sheet,
-  SheetContent,
-  SheetTrigger,
-} from '@/components/ui/sheet';
-import {
-  Menu,
-  LogOut,
-  LayoutDashboard,
-  UserCog,
-  MessageSquare,
-  Flag,
-  BarChart3,
-  Users,
-  FileText,
-  MessageCircle,
-  Heart,
-} from 'lucide-react';
-import {
-  LineChart,
-  Line,
+  AreaChart,
+  Area,
   BarChart,
   Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip as RTooltip,
-  ResponsiveContainer,
+  LineChart,
+  Line,
   PieChart,
   Pie,
   Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip as RTooltip,
 } from 'recharts';
-import type { UserData, PostData, CommentData } from '@/lib/types';
 
-const adminNavItems = [
-  { view: 'admin-dashboard' as const, label: 'لوحة التحكم', icon: LayoutDashboard },
-  { view: 'admin-users' as const, label: 'المستخدمين', icon: UserCog },
-  { view: 'admin-posts' as const, label: 'المنشورات', icon: MessageSquare },
-  { view: 'admin-comments' as const, label: 'التعليقات', icon: MessageSquare },
-  { view: 'admin-reports' as const, label: 'البلاغات', icon: Flag },
-  { view: 'admin-analytics' as const, label: 'الإحصائيات', icon: BarChart3 },
-];
+type DateRange = '7' | '30' | '90';
 
-function AdminNav({ active }: { active: string }) {
-  const { navigate, setAdminMode } = useAppStore();
-  const { logout } = useAuth();
+const COLORS = ['#34d399', '#38bdf8', '#fbbf24'];
 
-  const handleLogout = async () => {
-    setAdminMode(false);
-    await logout();
-  };
-
-  const navContent = (
-    <div className="flex flex-col gap-1 py-4">
-      <div className="flex items-center gap-3 px-4 pb-4 mb-2 border-b border-border/50">
-        <img src="/at-icon.png" alt="AT" width={32} height={32} className="rounded-lg" />
-        <div>
-          <p className="font-bold text-sm">لوحة الإدارة</p>
-          <p className="text-xs text-muted-foreground">عدن تويتر</p>
-        </div>
-      </div>
-      {adminNavItems.map((item) => (
-        <button
-          key={item.view}
-          onClick={() => navigate(item.view)}
-          className={`flex items-center gap-3 px-4 py-2.5 text-sm rounded-lg mx-2 transition-colors ${
-            active === item.view
-              ? 'bg-emerald-500/10 text-emerald-500 font-medium'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-          }`}
-        >
-          <item.icon className="h-4 w-4" />
-          {item.label}
-        </button>
-      ))}
-      <div className="mt-auto pt-4 border-t border-border/50 mt-4">
-        <button
-          onClick={handleLogout}
-          className="flex items-center gap-3 px-4 py-2.5 text-sm text-destructive hover:bg-destructive/10 rounded-lg mx-2 w-[calc(100%-1rem)]"
-        >
-          <LogOut className="h-4 w-4" />
-          تسجيل الخروج
-        </button>
-      </div>
-    </div>
-  );
-
-  return (
-    <>
-      <aside className="hidden lg:flex w-60 shrink-0 border-l border-border/30 flex-col h-screen sticky top-0 bg-background">
-        {navContent}
-      </aside>
-      <div className="lg:hidden sticky top-0 z-50 bg-background/95 backdrop-blur-sm border-b border-border/50 px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <img src="/at-icon.png" alt="AT" width={28} height={28} className="rounded-lg" />
-          <span className="font-bold text-sm">الإدارة</span>
-        </div>
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" className="h-9 w-9">
-              <Menu className="h-5 w-5" />
-            </Button>
-          </SheetTrigger>
-          <SheetContent side="right" className="w-64 p-0">
-            {navContent}
-          </SheetContent>
-        </Sheet>
-      </div>
-    </>
-  );
+interface ChartDataPoint {
+  name: string;
+  users?: number;
+  posts?: number;
+  likes?: number;
+  comments?: number;
 }
 
-const CHART_COLORS = ['#10b981', '#f97316', '#eab308', '#6b7280'];
-
-interface DayBucket {
-  date: string;
-  users: number;
-  posts: number;
+function CustomTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-card border border-border rounded-lg px-3 py-2 shadow-lg">
+      <p className="text-xs font-medium mb-1">{label}</p>
+      {payload.map((p, i) => (
+        <p key={i} className="text-xs" style={{ color: p.color }}>
+          {p.name}: {p.value}
+        </p>
+      ))}
+    </div>
+  );
 }
 
 export function AdminAnalyticsView() {
-  const [allUsers, setAllUsers] = useState<UserData[]>([]);
-  const [allPosts, setAllPosts] = useState<PostData[]>([]);
-  const [allComments, setAllComments] = useState<CommentData[]>([]);
+  const [dateRange, setDateRange] = useState<DateRange>('7');
   const [loading, setLoading] = useState(true);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [totalPosts, setTotalPosts] = useState(0);
+  const [totalComments, setTotalComments] = useState(0);
+  const [totalLikes, setTotalLikes] = useState(0);
+  const [mostActiveUser, setMostActiveUser] = useState<UserData | null>(null);
+  const [userGrowth, setUserGrowth] = useState<ChartDataPoint[]>([]);
+  const [dailyPosts, setDailyPosts] = useState<ChartDataPoint[]>([]);
+  const [dailyEngagement, setDailyEngagement] = useState<ChartDataPoint[]>([]);
+  const [contentDistribution, setContentDistribution] = useState<{ name: string; value: number }[]>([]);
+
+  const days = useMemo(() => parseInt(dateRange, 10), [dateRange]);
+
+  const aggregateData = useCallback(async () => {
+    const [usersSnap, postsSnap, commentsSnap] = await Promise.all([
+      get(ref(db, 'users')),
+      get(ref(db, 'posts')),
+      get(ref(db, 'comments')),
+    ]);
+
+    const usersRaw = usersSnap.exists() ? (usersSnap.val() as Record<string, UserData>) : {};
+    const postsRaw = postsSnap.exists() ? (postsSnap.val() as Record<string, PostData>) : {};
+    const commentsRaw = commentsSnap.exists() ? (commentsSnap.val() as Record<string, CommentData>) : {};
+
+    // Totals
+    setTotalUsers(Object.keys(usersRaw).length);
+    const activePosts = Object.values(postsRaw).filter((p) => !p.isDeleted);
+    setTotalPosts(activePosts.length);
+    setTotalComments(Object.keys(commentsRaw).length);
+
+    // Total likes
+    let totalLikesCount = 0;
+    for (const p of activePosts) totalLikesCount += p.likesCount || 0;
+    setTotalLikes(totalLikesCount);
+
+    // Most active user
+    const userPostCounts: Record<string, number> = {};
+    for (const p of activePosts) {
+      userPostCounts[p.userId] = (userPostCounts[p.userId] || 0) + 1;
+    }
+    let maxPosts = 0;
+    let maxUserId = '';
+    for (const [uid, count] of Object.entries(userPostCounts)) {
+      if (count > maxPosts) { maxPosts = count; maxUserId = uid; }
+    }
+    if (maxUserId && usersRaw[maxUserId]) {
+      setMostActiveUser(usersRaw[maxUserId]);
+    }
+
+    // Time-series data
+    const now = Date.now();
+    const dayMs = 24 * 60 * 60 * 1000;
+    const growth: ChartDataPoint[] = [];
+    const posts: ChartDataPoint[] = [];
+    const engagement: ChartDataPoint[] = [];
+
+    for (let i = days - 1; i >= 0; i--) {
+      const dayStart = now - i * dayMs;
+      const dayEnd = dayStart + dayMs;
+      const label = new Date(dayStart).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
+
+      // User growth (cumulative up to this day)
+      const userCount = Object.values(usersRaw).filter(
+        (u) => (u.createdAt || 0) <= dayEnd
+      ).length;
+      growth.push({ name: label, users: userCount });
+
+      // Posts on this day
+      const dayPosts = activePosts.filter((p) => p.timestamp >= dayStart && p.timestamp < dayEnd);
+      posts.push({ name: label, posts: dayPosts.length });
+
+      // Engagement on this day
+      const dayLikes = dayPosts.reduce((sum, p) => sum + (p.likesCount || 0), 0);
+      const dayComments = Object.values(commentsRaw).filter(
+        (c) => c.timestamp >= dayStart && c.timestamp < dayEnd
+      ).length;
+      engagement.push({ name: label, likes: dayLikes, comments: dayComments });
+    }
+
+    setUserGrowth(growth);
+    setDailyPosts(posts);
+    setDailyEngagement(engagement);
+
+    // Content distribution
+    const textOnly = activePosts.filter((p) => !p.imageBase64 && !p.isQuote).length;
+    const withImage = activePosts.filter((p) => !!p.imageBase64).length;
+    const withQuote = activePosts.filter((p) => !!p.isQuote).length;
+    setContentDistribution([
+      { name: 'نص فقط', value: textOnly },
+      { name: 'مع صورة', value: withImage },
+      { name: 'اقتباس', value: withQuote },
+    ]);
+
+    setLoading(false);
+  }, [days]);
 
   useEffect(() => {
-    const usersRef = ref(db, 'users');
-    const unsub1 = onValue(usersRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const users: UserData[] = Object.values(data) as UserData[];
-        setAllUsers(users);
-      }
-      setLoading(false);
-    });
+    setLoading(true);
+    aggregateData();
+  }, [aggregateData]);
 
-    const postsRef = ref(db, 'posts');
-    const unsub2 = onValue(postsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const posts: PostData[] = [];
-        for (const [id, val] of Object.entries(data)) {
-          const p = val as PostData;
-          if (!p.isDeleted) posts.push({ ...p, id });
-        }
-        setAllPosts(posts);
-      }
-    });
-
-    const commentsRef = ref(db, 'comments');
-    const unsub3 = onValue(commentsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const comments: CommentData[] = [];
-        for (const [id, val] of Object.entries(data)) {
-          const c = val as CommentData;
-          if (!c.isDeleted) comments.push({ ...c, id });
-        }
-        setAllComments(comments);
-      }
-    });
-
-    return () => {
-      off(usersRef);
-      off(postsRef);
-      off(commentsRef);
-    };
-  }, []);
-
-  // Aggregate data by day (last 14 days)
-  const dailyData = useMemo((): DayBucket[] => {
-    const days: DayBucket[] = [];
-    const now = new Date();
-    for (let i = 13; i >= 0; i--) {
-      const d = new Date(now);
-      d.setDate(d.getDate() - i);
-      d.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(d);
-      dayEnd.setDate(dayEnd.getDate() + 1);
-
-      const dayTs = d.getTime();
-      const dayEndTs = dayEnd.getTime();
-      const dateStr = d.toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' });
-
-      days.push({
-        date: dateStr,
-        users: allUsers.filter((u) => u.createdAt >= dayTs && u.createdAt < dayEndTs).length,
-        posts: allPosts.filter((p) => p.timestamp >= dayTs && p.timestamp < dayEndTs).length,
-      });
-    }
-    return days;
-  }, [allUsers, allPosts]);
-
-  // Content distribution for pie chart
-  const contentDistribution = useMemo(() => {
-    const withImages = allPosts.filter((p) => p.imageBase64).length;
-    const textOnly = allPosts.length - withImages;
-    return [
-      { name: 'بالصور', value: withImages },
-      { name: 'نص فقط', value: textOnly },
-    ];
-  }, [allPosts]);
-
-  // Summary stats
-  const totalLikes = useMemo(() => {
-    return allPosts.reduce((sum, p) => sum + (p.likesCount || 0), 0);
-  }, [allPosts]);
-
-  const summaryStats = [
-    { label: 'إجمالي المستخدمين', value: allUsers.length, icon: Users, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-    { label: 'إجمالي المنشورات', value: allPosts.length, icon: FileText, color: 'text-orange-500', bg: 'bg-orange-500/10' },
-    { label: 'إجمالي التعليقات', value: allComments.length, icon: MessageCircle, color: 'text-amber-500', bg: 'bg-amber-500/10' },
-    { label: 'إجمالي الإعجابات', value: totalLikes, icon: Heart, color: 'text-rose-500', bg: 'bg-rose-500/10' },
-  ];
-
-  const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) => {
-    if (!active || !payload) return null;
-    return (
-      <div className="bg-popover border border-border/50 rounded-lg p-2.5 shadow-lg text-xs">
-        <p className="font-medium mb-1">{label}</p>
-        {payload.map((entry, i) => (
-          <p key={i} style={{ color: entry.color }} className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
-            {entry.name}: {entry.value}
-          </p>
-        ))}
-      </div>
-    );
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen flex">
-        <AdminNav active="admin-analytics" />
-        <main className="flex-1 p-6 max-w-5xl mx-auto w-full">
-          <Skeleton className="h-8 w-48 mb-6" />
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 rounded-xl" />
-            ))}
-          </div>
-          <Skeleton className="h-72 rounded-xl mb-4" />
-          <Skeleton className="h-72 rounded-xl" />
-        </main>
-      </div>
-    );
-  }
+  const avgEngagement = totalPosts > 0 ? ((totalLikes + totalComments) / totalPosts).toFixed(1) : '0';
 
   return (
-    <div className="min-h-screen flex" dir="rtl">
-      <AdminNav active="admin-analytics" />
+    <div className="min-h-screen bg-background">
+      <AdminNav activeView="admin-analytics" />
 
-      <main className="flex-1 min-w-0 p-4 lg:p-6 max-w-5xl mx-auto w-full">
-        <h1 className="text-xl font-bold mb-6">الإحصائيات</h1>
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-4 mb-6">
-          {summaryStats.map((stat) => (
-            <Card key={stat.label} className="border-border/50">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-3">
-                  <div className={`p-2.5 rounded-xl ${stat.bg}`}>
-                    <stat.icon className={`h-5 w-5 ${stat.color}`} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-2xl font-bold">{stat.value.toLocaleString('ar-EG')}</p>
-                    <p className="text-xs text-muted-foreground truncate">{stat.label}</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+      <div className="max-w-6xl mx-auto px-4 py-4 space-y-6">
+        {/* Date Range Selector */}
+        <div className="flex items-center gap-2">
+          {([['7', 'آخر 7 أيام'], ['30', 'آخر 30 يوم'], ['90', 'آخر 90 يوم']] as const).map(([val, label]) => (
+            <button
+              key={val}
+              onClick={() => setDateRange(val as DateRange)}
+              className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                dateRange === val ? 'bg-accent font-bold text-foreground' : 'text-muted-foreground hover:bg-accent/50'
+              }`}
+            >
+              {label}
+            </button>
           ))}
         </div>
 
-        {/* User Growth Line Chart */}
-        <Card className="border-border/50 mb-4">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold">نمو المستخدمين (آخر 14 يوم)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-64 lg:h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={dailyData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                    axisLine={{ stroke: 'hsl(var(--border))' }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                    axisLine={{ stroke: 'hsl(var(--border))' }}
-                    tickLine={false}
-                    allowDecimals={false}
-                  />
-                  <RTooltip content={<CustomTooltip />} />
-                  <Line
-                    type="monotone"
-                    dataKey="users"
-                    name="مستخدمون جدد"
-                    stroke="#10b981"
-                    strokeWidth={2}
-                    dot={{ r: 3, fill: '#10b981' }}
-                    activeDot={{ r: 5 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Summary Cards */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[
+            { icon: Users, label: 'إجمالي المستخدمين', value: formatNumber(totalUsers), color: 'text-emerald-400', bg: 'bg-emerald-400/10' },
+            { icon: FileText, label: 'إجمالي المنشورات', value: formatNumber(totalPosts), color: 'text-sky-400', bg: 'bg-sky-400/10' },
+            { icon: TrendingUp, label: 'متوسط التفاعل', value: avgEngagement, color: 'text-amber-400', bg: 'bg-amber-400/10' },
+            { icon: Crown, label: 'الأكثر نشاطًا', value: mostActiveUser?.fullName?.split(' ')[0] || '-', color: 'text-rose-400', bg: 'bg-rose-400/10' },
+          ].map((card, i) => (
+            <motion.div
+              key={card.label}
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.1 }}
+            >
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`h-10 w-10 rounded-xl flex items-center justify-center ${card.bg}`}>
+                      <card.icon className={`h-5 w-5 ${card.color}`} />
+                    </div>
+                    <div>
+                      <p className="text-xl font-bold">{card.value}</p>
+                      <p className="text-xs text-muted-foreground">{card.label}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          ))}
+        </div>
 
-        {/* Daily Posts Bar Chart */}
-        <Card className="border-border/50 mb-4">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold">المنشورات اليومية (آخر 14 يوم)</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-64 lg:h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dailyData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                    axisLine={{ stroke: 'hsl(var(--border))' }}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }}
-                    axisLine={{ stroke: 'hsl(var(--border))' }}
-                    tickLine={false}
-                    allowDecimals={false}
-                  />
-                  <RTooltip content={<CustomTooltip />} />
-                  <Bar
-                    dataKey="posts"
-                    name="منشورات"
-                    fill="#f97316"
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Charts Grid */}
+        <div className="grid lg:grid-cols-2 gap-4">
+          {/* User Growth AreaChart */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">نمو المستخدمين</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <AreaChart data={userGrowth}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="name" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                      <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                      <RTooltip content={<CustomTooltip />} />
+                      <defs>
+                        <linearGradient id="userGrad" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#34d399" stopOpacity={0.3} />
+                          <stop offset="95%" stopColor="#34d399" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <Area
+                        type="monotone"
+                        dataKey="users"
+                        name="المستخدمين"
+                        stroke="#34d399"
+                        fill="url(#userGrad)"
+                        strokeWidth={2}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
 
-        {/* Content Distribution Pie Chart */}
-        <Card className="border-border/50">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-bold">توزيع المحتوى</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-64 lg:h-72 flex items-center justify-center">
-              {allPosts.length === 0 ? (
-                <p className="text-muted-foreground text-sm">لا توجد بيانات كافية</p>
-              ) : (
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={contentDistribution}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {contentDistribution.map((_, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={CHART_COLORS[index % CHART_COLORS.length]}
-                        />
-                      ))}
-                    </Pie>
-                    <RTooltip content={<CustomTooltip />} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
-            </div>
-            <div className="flex items-center justify-center gap-6 mt-2">
-              {contentDistribution.map((item, index) => (
-                <div key={item.name} className="flex items-center gap-2 text-sm">
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: CHART_COLORS[index % CHART_COLORS.length] }}
-                  />
-                  <span className="text-muted-foreground">{item.name}</span>
-                  <span className="font-medium">{item.value}</span>
+          {/* Daily Posts BarChart */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">المنشورات اليومية</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <BarChart data={dailyPosts}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="name" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                      <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                      <RTooltip content={<CustomTooltip />} />
+                      <Bar dataKey="posts" name="المنشورات" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Content Distribution PieChart */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.5 }}>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">توزيع المحتوى</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : (
+                  <div className="flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie
+                          data={contentDistribution}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={90}
+                          paddingAngle={4}
+                          dataKey="value"
+                          label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        >
+                          {contentDistribution.map((_, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <RTooltip content={<CustomTooltip />} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Daily Engagement LineChart */}
+          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.6 }}>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">التفاعل اليومي</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={250}>
+                    <LineChart data={dailyEngagement}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                      <XAxis dataKey="name" tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                      <YAxis tick={{ fill: 'hsl(var(--muted-foreground))', fontSize: 11 }} />
+                      <RTooltip content={<CustomTooltip />} />
+                      <Line type="monotone" dataKey="likes" name="إعجابات" stroke="#f43f5e" strokeWidth={2} dot={false} />
+                      <Line type="monotone" dataKey="comments" name="تعليقات" stroke="#38bdf8" strokeWidth={2} dot={false} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        </div>
+
+        {/* Extra Stats */}
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.7 }}>
+          <Card>
+            <CardContent className="p-4">
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div>
+                  <p className="text-2xl font-bold text-rose-400">{formatNumber(totalLikes)}</p>
+                  <p className="text-xs text-muted-foreground">إجمالي الإعجابات</p>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </main>
+                <div>
+                  <p className="text-2xl font-bold text-sky-400">{formatNumber(totalComments)}</p>
+                  <p className="text-xs text-muted-foreground">إجمالي التعليقات</p>
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-emerald-400">
+                    {totalUsers > 0 ? (totalPosts / totalUsers).toFixed(1) : '0'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">متوسط المنشورات/مستخدم</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
     </div>
   );
 }

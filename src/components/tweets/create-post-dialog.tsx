@@ -1,7 +1,10 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { useAppStore } from '@/store/app-store';
+import { VerificationBadge } from '@/components/layout/verification-badge';
+import { AvatarCircle } from '@/components/tweets/post-card';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import {
@@ -17,131 +20,190 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { useAppStore } from '@/store/app-store';
-import { ImageIcon, X, PenSquare } from 'lucide-react';
+import { ImagePlus, Film, X, PenSquare, Loader2 } from 'lucide-react';
 import { ref, push, get, update, set as firebaseSet } from 'firebase/database';
 import { db } from '@/lib/firebase';
+import { cn, compressImage } from '@/lib/utils';
 import { toast } from 'sonner';
-import type { PostData, CommentData } from '@/lib/types';
+import { motion, AnimatePresence } from 'framer-motion';
+import type { PostData, UserData } from '@/lib/types';
 
 const MAX_CHARS = 280;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
+const MAX_IMAGES = 4;
 
 function ComposeContent({
   onClose,
-  replyToPostId,
 }: {
   onClose: () => void;
-  replyToPostId: string | null;
 }) {
   const { user, userData } = useAuth();
+  const {
+    replyToPostId,
+    setReplyToPostId,
+    quotePostId,
+    setQuotePostId,
+  } = useAppStore();
   const userId = user?.uid;
+
   const [content, setContent] = useState('');
-  const [imageBase64, setImageBase64] = useState('');
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [images, setImages] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [replyingTo, setReplyingTo] = useState<PostData | null>(null);
+  const [replyingToUser, setReplyingToUser] = useState<UserData | null>(null);
+  const [quotePost, setQuotePost] = useState<PostData | null>(null);
+  const [quoteAuthor, setQuoteAuthor] = useState<UserData | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const avatar = userData?.avatarBase64 || '';
   const name = userData?.fullName || 'مستخدم';
+  const username = userData?.username || 'user';
 
-  // Load reply-to post info
+  const charCount = content.length;
+  const remaining = MAX_CHARS - charCount;
+  const isOverLimit = remaining < 0;
+  const canSubmit = content.trim().length > 0 && !isOverLimit && !isSubmitting;
+
+  // Load reply-to user info
   useEffect(() => {
     if (!replyToPostId) return;
-    const postRef = ref(db, `posts/${replyToPostId}`);
-    get(postRef).then((snap) => {
+    get(ref(db, `posts/${replyToPostId}`)).then((snap) => {
       if (snap.exists()) {
-        setReplyingTo(snap.val() as PostData);
+        const data = snap.val() as PostData;
+        if (data.userId) {
+          get(ref(db, `users/${data.userId}`)).then((userSnap) => {
+            if (userSnap.exists()) setReplyingToUser(userSnap.val() as UserData);
+          });
+        }
       }
     });
   }, [replyToPostId]);
 
-  const charCount = content.length;
-  const isOverLimit = charCount > MAX_CHARS;
+  // Load quote post info
+  useEffect(() => {
+    if (!quotePostId) return;
+    get(ref(db, `posts/${quotePostId}`)).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.val() as PostData;
+        setQuotePost(data);
+        if (data.userId) {
+          get(ref(db, `users/${data.userId}`)).then((userSnap) => {
+            if (userSnap.exists()) setQuoteAuthor(userSnap.val() as UserData);
+          });
+        }
+      }
+    });
+  }, [quotePostId]);
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // Auto-resize textarea
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight, 300)}px`;
+  }, [content]);
 
-    if (file.size > MAX_IMAGE_SIZE) {
-      toast.error('حجم الصورة يجب أن يكون أقل من 5 ميجابايت');
-      return;
+  // Auto-focus
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  const handleImageChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    for (const file of files) {
+      if (images.length >= MAX_IMAGES) {
+        toast.error(`يمكنك إضافة ${MAX_IMAGES} صور كحد أقصى`);
+        break;
+      }
+      if (file.size > MAX_IMAGE_SIZE) {
+        toast.error('حجم الصورة يجب أن يكون أقل من 5 ميجابايت');
+        continue;
+      }
+      if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        toast.error('يجب أن تكون الصورة بصيغة JPEG أو PNG');
+        continue;
+      }
+      try {
+        const base64 = await compressImage(file, 1200, 0.7);
+        setImages((prev) => [...prev, base64]);
+      } catch {
+        toast.error('فشل في معالجة الصورة');
+      }
     }
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64 = result.split(',')[1] || '';
-      setImageBase64(base64);
-      setImageFile(file);
-    };
-    reader.readAsDataURL(file);
     e.target.value = '';
+  }, [images.length]);
+
+  const removeImage = (index: number) => {
+    setImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async () => {
-    if (!content.trim() || isSubmitting || !userId) return;
+    if (!canSubmit || !userId) return;
 
     setIsSubmitting(true);
     try {
-      const postData: Partial<PostData> = {
-        userId,
-        content: content.trim(),
-        imageBase64: imageBase64,
-        timestamp: Date.now(),
-        likesCount: 0,
-        commentsCount: 0,
-        repostsCount: 0,
-        isDeleted: false,
-      };
+      const mainImage = images[0] || '';
 
       // If replying
       if (replyToPostId) {
-        const commentData: Partial<CommentData> = {
+        const commentRef = push(ref(db, 'comments'));
+        await firebaseSet(ref(db, `comments/${commentRef.key}`), {
+          id: commentRef.key,
           postId: replyToPostId,
           userId,
           content: content.trim(),
-          imageBase64: imageBase64,
+          imageBase64: mainImage,
           timestamp: Date.now(),
           likesCount: 0,
           parentId: null,
           isDeleted: false,
-        };
-        const commentRef = push(ref(db, 'comments'));
-        await firebaseSet(ref(db, `comments/${commentRef.key}`), {
-          ...commentData,
-          id: commentRef.key,
         });
 
         // Increment comment count
-        const postSnap = await get(ref(db, `posts/${replyToPostId}/commentsCount`));
-        const currentCount = postSnap.val() || 0;
+        const snap = await get(ref(db, `posts/${replyToPostId}/commentsCount`));
         await update(ref(db, `posts/${replyToPostId}`), {
-          commentsCount: currentCount + 1,
+          commentsCount: (snap.val() || 0) + 1,
         });
         toast.success('تم نشر الرد بنجاح');
       } else {
-        // New post
+        // New post or quote
+        const postData = {
+          id: '',
+          userId,
+          content: content.trim(),
+          imageBase64: mainImage,
+          timestamp: Date.now(),
+          likesCount: 0,
+          commentsCount: 0,
+          repostsCount: 0,
+          viewsCount: 0,
+          bookmarksCount: 0,
+          isDeleted: false,
+          isPinned: false,
+          isQuote: !!quotePostId,
+          quotePostId: quotePostId || '',
+          repostedBy: '',
+          originalPostId: '',
+        };
+
         const postRef = push(ref(db, 'posts'));
-        await firebaseSet(ref(db, `posts/${postRef.key}`), {
-          ...postData,
-          id: postRef.key,
-        });
+        await firebaseSet(ref(db, `posts/${postRef.key}`), { ...postData, id: postRef.key });
 
         // Increment user's postsCount
         const countSnap = await get(ref(db, `users/${userId}/postsCount`));
-        const currentCount = countSnap.val() || 0;
         await update(ref(db, `users/${userId}`), {
-          postsCount: currentCount + 1,
+          postsCount: (countSnap.val() || 0) + 1,
         });
 
-        toast.success('تم نشر التغريدة بنجاح');
+        toast.success('تم النشر بنجاح');
       }
 
       setContent('');
-      setImageBase64('');
-      setImageFile(null);
+      setImages([]);
+      setReplyToPostId(null);
+      setQuotePostId(null);
       onClose();
     } catch {
       toast.error('حدث خطأ أثناء النشر');
@@ -150,112 +212,187 @@ function ComposeContent({
     }
   };
 
+  const handleDismissReply = () => {
+    setReplyToPostId(null);
+  };
+
+  const handleDismissQuote = () => {
+    setQuotePostId(null);
+  };
+
   return (
     <div className="flex gap-3 p-4">
       {/* Avatar */}
-      <div className="shrink-0">
-        {avatar ? (
-          <img
-            src={`data:image/jpeg;base64,${avatar}`}
-            alt={name}
-            className="h-10 w-10 rounded-full object-cover"
-          />
-        ) : (
-          <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
-            {name.charAt(0)}
+      <AvatarCircle base64={avatar} name={name} className="h-10 w-10" />
+
+      <div className="flex-1 flex flex-col gap-2">
+        {/* Name + username + badge */}
+        <div className="flex items-center gap-1.5">
+          <span className="font-bold text-sm">{name}</span>
+          {userData?.isVerified && (
+            <VerificationBadge type={userData.verificationType || 'blue'} size="sm" />
+          )}
+          <span className="text-muted-foreground text-sm">@{username}</span>
+        </div>
+
+        {/* Reply to indicator */}
+        {replyToPostId && replyingToUser && (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span>الرد على</span>
+            <span className="text-foreground font-medium">@{replyingToUser.username}</span>
+            <button
+              type="button"
+              className="hover:text-foreground transition-colors"
+              onClick={handleDismissReply}
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
-      </div>
 
-      <div className="flex-1 flex flex-col gap-3">
-        {/* Replying to info */}
-        {replyingTo && (
-          <div className="text-sm text-muted-foreground">
-            ردًا على <span className="text-foreground font-medium">@{replyingTo.userId}</span>
-          </div>
-        )}
-
+        {/* Textarea */}
         <Textarea
+          ref={textareaRef}
           value={content}
           onChange={(e) => setContent(e.target.value)}
           placeholder="ما الذي يحدث؟"
-          className="min-h-[120px] resize-none border-0 bg-transparent text-base focus-visible:ring-0 p-0 placeholder:text-muted-foreground/60"
+          className="min-h-[120px] resize-none border-0 bg-transparent text-base focus-visible:ring-0 p-0 placeholder:text-muted-foreground/50 leading-relaxed"
           dir="rtl"
-          autoFocus
+          maxLength={MAX_CHARS + 50}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              handleSubmit();
+            }
+          }}
         />
 
-        {/* Image Preview */}
-        {imageBase64 && (
-          <div className="relative rounded-2xl overflow-hidden border border-border/50">
-            <img
-              src={`data:image/jpeg;base64,${imageBase64}`}
-              alt="صورة"
-              className="w-full max-h-48 object-cover"
-            />
-            <Button
-              variant="secondary"
-              size="icon"
-              className="absolute top-2 left-2 h-7 w-7 rounded-full bg-black/60 hover:bg-black/80"
-              onClick={() => {
-                setImageBase64('');
-                setImageFile(null);
-              }}
+        {/* Image previews */}
+        <AnimatePresence>
+          {images.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className={cn(
+                'grid gap-2',
+                images.length === 1 ? 'grid-cols-1' : 'grid-cols-2'
+              )}
             >
-              <X className="h-4 w-4" />
-            </Button>
+              {images.map((img, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.05 }}
+                  className={cn(
+                    'relative rounded-xl overflow-hidden border border-border/50',
+                    images.length === 1 ? 'max-h-[300px]' : 'max-h-[180px]'
+                  )}
+                >
+                  <img
+                    src={`data:image/jpeg;base64,${img}`}
+                    alt={`صورة ${i + 1}`}
+                    className="w-full h-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    className="absolute top-2 left-2 h-7 w-7 rounded-full bg-black/60 hover:bg-black/80 flex items-center justify-center transition-colors"
+                    onClick={() => removeImage(i)}
+                  >
+                    <X className="h-4 w-4 text-white" />
+                  </button>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Quote post preview */}
+        {quotePostId && quotePost && (
+          <div className="rounded-2xl border border-border/50 p-3 bg-accent/20">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-1.5">
+                <AvatarCircle
+                  base64={quoteAuthor?.avatarBase64 || ''}
+                  name={quoteAuthor?.fullName || 'مستخدم'}
+                  className="h-5 w-5"
+                />
+                <span className="text-xs font-bold">{quoteAuthor?.fullName || 'مستخدم'}</span>
+                {quoteAuthor?.isVerified && (
+                  <VerificationBadge type={quoteAuthor.verificationType || 'blue'} size="sm" />
+                )}
+              </div>
+              <button type="button" onClick={handleDismissQuote} className="text-muted-foreground hover:text-foreground">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground line-clamp-2">{quotePost.content}</p>
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex items-center justify-between border-t border-border/50 pt-3">
-          <div className="flex gap-1">
+        {/* Bottom toolbar */}
+        <div className="flex items-center justify-between border-t border-border/50 pt-3 mt-1">
+          {/* Image buttons */}
+          <div className="flex gap-0.5">
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp"
+              multiple
               className="hidden"
               onChange={handleImageChange}
             />
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9 text-rose-400 hover:text-rose-300 hover:bg-rose-400/10"
+              className="h-9 w-9 text-sky-400 hover:text-sky-300 hover:bg-sky-400/10 rounded-full"
               onClick={() => fileInputRef.current?.click()}
+              disabled={images.length >= MAX_IMAGES}
             >
-              <ImageIcon className="h-5 w-5" />
+              <ImagePlus className="h-5 w-5" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-9 w-9 text-sky-400 hover:text-sky-300 hover:bg-sky-400/10 rounded-full opacity-50"
+              disabled
+            >
+              <Film className="h-5 w-5" />
             </Button>
           </div>
 
           <div className="flex items-center gap-3">
-            {content.length > 0 && (
-              <span
-                className={`text-xs ${
-                  isOverLimit ? 'text-rose-500' : 'text-muted-foreground'
-                }`}
-              >
-                <span className={isOverLimit ? '' : 'text-foreground'}>
+            {/* Character counter */}
+            <AnimatePresence>
+              {charCount > 0 && (
+                <motion.span
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  className={cn(
+                    'text-xs tabular-nums',
+                    remaining < 20 ? 'text-rose-500' : 'text-muted-foreground'
+                  )}
+                >
                   {MAX_CHARS - charCount}
-                </span>
-                /{MAX_CHARS}
-              </span>
-            )}
+                </motion.span>
+              )}
+            </AnimatePresence>
+
+            {/* Submit button */}
             <Button
               size="sm"
-              className="rounded-full px-5 font-bold"
-              disabled={!content.trim() || isOverLimit || isSubmitting}
+              className="rounded-full px-5 font-bold h-9"
+              disabled={!canSubmit}
               onClick={handleSubmit}
             >
               {isSubmitting ? (
-                <span className="flex items-center gap-2">
-                  <span className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  جاري النشر...
-                </span>
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <span className="flex items-center gap-2">
-                  <PenSquare className="h-4 w-4" />
-                  انشر
-                </span>
+                <PenSquare className="h-4 w-4 ml-1" />
               )}
+              نشر
             </Button>
           </div>
         </div>
@@ -265,36 +402,44 @@ function ComposeContent({
 }
 
 export function CreatePostDialog() {
-  const { isComposeOpen, setComposeOpen, replyToPostId, setReplyToPostId } = useAppStore();
+  const {
+    isComposeOpen,
+    setComposeOpen,
+    replyToPostId,
+    setReplyToPostId,
+    quotePostId,
+    setQuotePostId,
+  } = useAppStore();
   const isMobile = useIsMobile();
 
   const handleClose = (open: boolean) => {
     if (!open) {
       setComposeOpen(false);
-      if (replyToPostId) {
-        setReplyToPostId(null);
-      }
+      if (replyToPostId) setReplyToPostId(null);
+      if (quotePostId) setQuotePostId(null);
     }
   };
 
   const onClose = () => {
     setComposeOpen(false);
-    if (replyToPostId) {
-      setReplyToPostId(null);
-    }
+    if (replyToPostId) setReplyToPostId(null);
+    if (quotePostId) setQuotePostId(null);
   };
 
-  const title = replyToPostId ? 'رد على التغريدة' : 'تغريدة جديدة';
+  const title = replyToPostId ? 'رد على التغريدة' : quotePostId ? 'نقل التغريدة' : 'تغريدة جديدة';
 
   if (isMobile) {
     return (
       <Sheet open={isComposeOpen} onOpenChange={handleClose}>
-        <SheetContent side="bottom" className="sm:max-w-lg mx-auto">
-          <SheetHeader className="flex flex-row items-center justify-between border-b border-border/50 px-4 py-3">
+        <SheetContent
+          side="bottom"
+          className="sm:max-w-lg mx-auto rounded-t-2xl max-h-[90vh] overflow-y-auto"
+        >
+          <SheetHeader className="flex flex-row items-center justify-between border-b border-border/50 px-4 py-3 -mx-4 -mt-4 mb-2">
             <Button
               variant="ghost"
               size="icon"
-              className="h-9 w-9"
+              className="h-9 w-9 rounded-full"
               onClick={onClose}
             >
               <X className="h-5 w-5" />
@@ -302,7 +447,7 @@ export function CreatePostDialog() {
             <SheetTitle className="text-lg font-bold">{title}</SheetTitle>
             <div className="w-9" />
           </SheetHeader>
-          <ComposeContent onClose={onClose} replyToPostId={replyToPostId} />
+          <ComposeContent onClose={onClose} />
         </SheetContent>
       </Sheet>
     );
@@ -310,11 +455,20 @@ export function CreatePostDialog() {
 
   return (
     <Dialog open={isComposeOpen} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-lg rounded-2xl p-0 max-h-[90vh] overflow-y-auto">
+        <DialogHeader className="flex flex-row items-center justify-between border-b border-border/50 px-4 py-3">
+          <div className="w-9" />
           <DialogTitle className="text-lg font-bold">{title}</DialogTitle>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-9 w-9 rounded-full"
+            onClick={onClose}
+          >
+            <X className="h-5 w-5" />
+          </Button>
         </DialogHeader>
-        <ComposeContent onClose={onClose} replyToPostId={replyToPostId} />
+        <ComposeContent onClose={onClose} />
       </DialogContent>
     </Dialog>
   );

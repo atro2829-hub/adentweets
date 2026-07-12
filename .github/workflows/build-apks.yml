@@ -1,0 +1,141 @@
+name: Build AdenTweets APKs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: 'Build type'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - user
+          - admin
+
+env:
+  JAVA_VERSION: '21'
+  NODE_VERSION: '20'
+
+jobs:
+  build-user:
+    if: ${{ github.event.inputs.build_type == 'user' || github.event.inputs.build_type == 'both' || github.event.inputs.build_type == '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Bun
+        run: npm install -g bun
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Create env file
+        run: |
+          cat > .env.local << EOF
+          NEXT_PUBLIC_FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL=${{ secrets.FIREBASE_DATABASE_URL }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID=${{ secrets.FIREBASE_APP_ID }}
+          EOF
+
+      - name: Build Next.js
+        run: npx next build
+
+      - name: Copy Firebase config
+        run: cp upload/google-services*.json android/app/google-services.json
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build User APK
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug
+
+      - name: Upload User APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: adentweets-user-app-debug
+          path: android/app/build/outputs/apk/debug/*.apk
+
+  build-admin:
+    if: ${{ github.event.inputs.build_type == 'admin' || github.event.inputs.build_type == 'both' || github.event.inputs.build_type == '' }}
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Setup Bun
+        run: npm install -g bun
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Create env file
+        run: |
+          cat > .env.local << EOF
+          NEXT_PUBLIC_FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL=${{ secrets.FIREBASE_DATABASE_URL }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID=${{ secrets.FIREBASE_APP_ID }}
+          EOF
+
+      - name: Build Next.js
+        run: npx next build
+
+      - name: Setup Admin Android
+        run: |
+          # Create admin capacitor config
+          cat > capacitor.admin.json << 'EOF'
+          {"appId":"com.adentweets.admin","appName":"AdenTweets Admin","webDir":"out","server":{"androidScheme":"https","cleartext":true},"plugins":{},"android":{"backgroundColor":"#000000","allowMixedContent":true}}
+          EOF
+          # Backup and switch config
+          cp capacitor.config.json capacitor.config.json.bak
+          cp capacitor.admin.json capacitor.config.json
+          npx cap add android android-admin || true
+          mv capacitor.config.json.bak capacitor.config.json
+          # Configure admin project
+          sed -i 's/com.adentweets.app/com.adentweets.admin/g' android-admin/app/build.gradle
+          cp upload/google-services*.json android-admin/app/google-services.json
+          cat > android-admin/app/src/main/assets/capacitor.config.json << 'EOF'
+          {"appId":"com.adentweets.admin","appName":"AdenTweets Admin","webDir":"out"}
+          EOF
+          cp -r out/* android-admin/app/src/main/assets/public/
+
+      - name: Build Admin APK
+        run: cd android-admin && chmod +x gradlew && ./gradlew assembleDebug
+
+      - name: Upload Admin APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: adentweets-admin-app-debug
+          path: android-admin/app/build/outputs/apk/debug/*.apk

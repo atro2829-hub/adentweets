@@ -1,0 +1,14 @@
+{
+  "appId": "com.adentweets.app",
+  "appName": "AdenTweets",
+  "webDir": "out",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {},
+  "android": {
+    "backgroundColor": "#000000",
+    "allowMixedContent": true
+  }
+}

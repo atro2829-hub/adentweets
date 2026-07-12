@@ -1,365 +1,315 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { motion } from 'framer-motion';
+import {
+  Heart,
+  MessageCircle,
+  UserPlus,
+  Repeat2,
+  Quote,
+  BadgeCheck,
+  Bell,
+  CheckCheck,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/lib/auth-context';
 import { useAppStore } from '@/store/app-store';
-import { ref, onValue, off, update, get } from 'firebase/database';
+import { cn, formatRelativeTime } from '@/lib/utils';
+import { ref, onValue, off, get, set, update } from 'firebase/database';
 import { db } from '@/lib/firebase';
-import type { UserData, NotificationData } from '@/lib/types';
-import { Heart, MessageCircle, Repeat2, UserPlus, AtSign, BellOff } from 'lucide-react';
+import type { NotificationData, UserData, PostData } from '@/lib/types';
+import { VerificationBadge } from '@/components/layout/verification-badge';
+import { PostCard } from '@/components/tweets/post-card';
 import { toast } from 'sonner';
 
 interface NotificationWithActor extends NotificationData {
-  actorData: UserData | null;
+  actorUser?: UserData | null;
+  relatedPost?: PostData | null;
 }
 
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diffMs = now - timestamp;
-  const diffMin = Math.floor(diffMs / 60000);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-  const diffWeek = Math.floor(diffDay / 7);
-  const diffMonth = Math.floor(diffDay / 30);
+type NotifType = NotificationData['type'];
 
-  if (diffMin < 1) return 'الآن';
-  if (diffMin === 1) return 'منذ دقيقة';
-  if (diffMin < 60) return `منذ ${diffMin} دقيقة`;
-  if (diffHour === 1) return 'منذ ساعة';
-  if (diffHour < 24) return `منذ ${diffHour} ساعة`;
-  if (diffDay === 1) return 'منذ يوم';
-  if (diffDay < 7) return `منذ ${diffDay} يوم`;
-  if (diffWeek === 1) return 'منذ أسبوع';
-  if (diffWeek < 5) return `منذ ${diffWeek} أسبوع`;
-  if (diffMonth === 1) return 'منذ شهر';
-  return `منذ ${diffMonth} شهر`;
-}
-
-function getNotificationIcon(type: NotificationData['type']) {
-  switch (type) {
-    case 'like':
-      return <Heart className="h-4 w-4 text-rose-500 fill-rose-500" />;
-    case 'comment':
-      return <MessageCircle className="h-4 w-4 text-emerald-400" />;
-    case 'repost':
-      return <Repeat2 className="h-4 w-4 text-emerald-400" />;
-    case 'follow':
-      return <UserPlus className="h-4 w-4 text-amber-400" />;
-    case 'mention':
-      return <AtSign className="h-4 w-4 text-amber-400" />;
-    default:
-      return <BellOff className="h-4 w-4 text-muted-foreground" />;
-  }
-}
-
-function getActionText(type: NotificationData['type']): string {
-  switch (type) {
-    case 'like':
-      return 'أعجب بمنشورك';
-    case 'comment':
-      return 'علّق على منشورك';
-    case 'follow':
-      return 'بدأ بمتابعتك';
-    case 'repost':
-      return 'أعاد نشر منشورك';
-    case 'mention':
-      return 'أشار إليك';
-    default:
-      return 'تفاعل معك';
-  }
-}
-
-const defaultUserData: UserData = {
-  username: '',
-  email: '',
-  fullName: '',
-  bio: '',
-  avatarBase64: '',
-  bannerBase64: '',
-  followersCount: 0,
-  followingCount: 0,
-  postsCount: 0,
-  isVerified: false,
-  isPrivate: false,
-  isSuspended: false,
-  isAdmin: false,
-  createdAt: 0,
+const typeConfig: Record<NotifType, { label: string; icon: React.ElementType; color: string; bg: string }> = {
+  like: { label: 'أعجب بمنشورك', icon: Heart, color: 'text-rose-400', bg: 'bg-rose-400/10' },
+  comment: { label: 'علّق على منشورك', icon: MessageCircle, color: 'text-sky-400', bg: 'bg-sky-400/10' },
+  follow: { label: 'بدأ بمتابعتك', icon: UserPlus, color: 'text-emerald-400', bg: 'bg-emerald-400/10' },
+  repost: { label: 'أعاد نشر تغريدتك', icon: Repeat2, color: 'text-green-400', bg: 'bg-green-400/10' },
+  quote: { label: 'اقتبس تغريدتك', icon: Quote, color: 'text-amber-400', bg: 'bg-amber-400/10' },
+  verification: { label: 'تم التحقق من حسابك', icon: BadgeCheck, color: 'text-blue-400', bg: 'bg-blue-400/10' },
+  mention: { label: 'أشار إليك', icon: MessageCircle, color: 'text-sky-400', bg: 'bg-sky-400/10' },
 };
+
+function groupByTime(notifs: NotificationWithActor[]) {
+  const now = Date.now();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayMs = today.getTime();
+  const weekAgo = todayMs - 7 * 24 * 60 * 60 * 1000;
+
+  const todayList: NotificationWithActor[] = [];
+  const weekList: NotificationWithActor[] = [];
+  const olderList: NotificationWithActor[] = [];
+
+  for (const n of notifs) {
+    if (n.timestamp >= todayMs) todayList.push(n);
+    else if (n.timestamp >= weekAgo) weekList.push(n);
+    else olderList.push(n);
+  }
+
+  const groups: { label: string; items: NotificationWithActor[] }[] = [];
+  if (todayList.length) groups.push({ label: 'اليوم', items: todayList });
+  if (weekList.length) groups.push({ label: 'هذا الأسبوع', items: weekList });
+  if (olderList.length) groups.push({ label: 'الأسبوع الماضي', items: olderList });
+  return groups;
+}
 
 export function NotificationsView() {
   const { user } = useAuth();
-  const { navigate, setUnreadCount, setViewParams, currentUserId } = useAppStore();
+  const uid = user?.uid;
+  const { navigate, setSelectedPostId, setViewParams, setUnreadCount } = useAppStore();
+
   const [notifications, setNotifications] = useState<NotificationWithActor[]>([]);
-  const [actorCache, setActorCache] = useState<Record<string, UserData>>({});
-  const [isLoading, setIsLoading] = useState(true);
-  const [isMarkingAll, setIsMarkingAll] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [userCache, setUserCache] = useState<Record<string, UserData>>({});
+  const [postCache, setPostCache] = useState<Record<string, PostData>>({});
 
-  const myUid = user?.uid || currentUserId;
+  const fetchUser = useCallback(async (userId: string): Promise<UserData | null> => {
+    if (userCache[userId]) return userCache[userId];
+    try {
+      const snap = await get(ref(db, `users/${userId}`));
+      if (snap.exists()) {
+        const data = snap.val() as UserData;
+        setUserCache((prev) => ({ ...prev, [userId]: data }));
+        return data;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [userCache]);
 
-  // Listen to notifications in real-time
+  const fetchPost = useCallback(async (postId: string): Promise<PostData | null> => {
+    if (postCache[postId]) return postCache[postId];
+    try {
+      const snap = await get(ref(db, `posts/${postId}`));
+      if (snap.exists()) {
+        const data = snap.val() as PostData;
+        setPostCache((prev) => ({ ...prev, [postId]: data }));
+        return data;
+      }
+    } catch { /* ignore */ }
+    return null;
+  }, [postCache]);
+
+  // Listen to notifications
   useEffect(() => {
-    if (!myUid) return;
-    setIsLoading(true);
-
-    const notifsRef = ref(db, `notifications/${myUid}`);
-
-    const unsubscribe = onValue(notifsRef, async (snapshot) => {
+    if (!uid) return;
+    const notifRef = ref(db, `notifications/${uid}`);
+    const unsub = onValue(notifRef, async (snapshot) => {
       if (!snapshot.exists()) {
         setNotifications([]);
-        setUnreadCount(0);
-        setIsLoading(false);
+        setLoading(false);
         return;
       }
+      const raw = snapshot.val();
+      const list: NotificationWithActor[] = [];
 
-      const data = snapshot.val() as Record<string, Omit<NotificationData, 'id'>>;
-      const notifList: NotificationWithActor[] = [];
-
-      for (const [id, notifData] of Object.entries(data)) {
-        notifList.push({
-          id,
-          type: notifData.type,
-          actorId: notifData.actorId,
-          postId: notifData.postId || '',
-          commentId: notifData.commentId || '',
-          timestamp: notifData.timestamp || 0,
-          isRead: notifData.isRead || false,
-          actorData: actorCache[notifData.actorId] || null,
-        });
+      for (const [id, val] of Object.entries(raw)) {
+        const n = val as NotificationData;
+        const actor = await fetchUser(n.actorId);
+        let relatedPost: PostData | null = null;
+        if (n.postId) relatedPost = await fetchPost(n.postId);
+        list.push({ ...n, id, actorUser: actor, relatedPost });
       }
 
-      // Sort by timestamp (newest first)
-      notifList.sort((a, b) => b.timestamp - a.timestamp);
+      list.sort((a, b) => b.timestamp - a.timestamp);
+      setNotifications(list);
 
-      // Count unread
-      const unreadCount = notifList.filter((n) => !n.isRead).length;
-      setUnreadCount(unreadCount);
-
-      // Fetch actor data for actors we don't have cached
-      const actorIds = [...new Set(notifList.map((n) => n.actorId).filter((id) => id && !actorCache[id]))];
-      const newCache = { ...actorCache };
-
-      if (actorIds.length > 0) {
-        const fetchPromises = actorIds.map(async (actorId) => {
-          try {
-            const userRef = ref(db, `users/${actorId}`);
-            const snap = await get(userRef);
-            if (snap.exists()) {
-              newCache[actorId] = { ...defaultUserData, ...snap.val() };
-            }
-          } catch {
-            // ignore individual failures
-          }
-        });
-        await Promise.all(fetchPromises);
-        setActorCache(newCache);
-
-        // Merge actor data into notifications
-        const updatedNotifs = notifList.map((n) => ({
-          ...n,
-          actorData: newCache[n.actorId] || n.actorData,
-        }));
-        setNotifications(updatedNotifs);
-      } else {
-        setNotifications(notifList);
-      }
-
-      setIsLoading(false);
-    }, (error) => {
-      console.error('Firebase notifications listener error:', error);
-      toast.error('حدث خطأ في تحميل الإشعارات');
-      setIsLoading(false);
+      const unread = list.filter((n) => !n.isRead).length;
+      setUnreadCount(unread);
+      setLoading(false);
     });
+    return () => off(notifRef);
+  }, [uid, fetchUser, fetchPost, setUnreadCount]);
 
-    return () => off(notifsRef);
-  }, [myUid]);
-
-  // Mark single notification as read
-  const handleMarkRead = async (notifId: string) => {
-    if (!myUid) return;
-
-    // Optimistic update
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notifId ? { ...n, isRead: true } : n))
-    );
-
+  // Mark individual as read
+  const markAsRead = useCallback(async (notif: NotificationWithActor) => {
+    if (!uid || notif.isRead) return;
     try {
-      await update(ref(db, `notifications/${myUid}/${notifId}`), { isRead: true });
-      // Update unread count
-      const newUnread = notifications.filter((n) => n.id !== notifId && !n.isRead).length;
-      setUnreadCount(newUnread);
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
-      toast.error('حدث خطأ');
-    }
-  };
+      await update(ref(db, `notifications/${uid}/${notif.id}`), { isRead: true });
+    } catch { /* ignore */ }
+  }, [uid]);
 
   // Mark all as read
-  const handleMarkAllRead = async () => {
-    if (!myUid || isMarkingAll) return;
-    setIsMarkingAll(true);
-
-    // Optimistic update
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-    setUnreadCount(0);
-
+  const markAllAsRead = useCallback(async () => {
+    if (!uid) return;
     try {
-      const notifsRef = ref(db, `notifications/${myUid}`);
-      const snapshot = await get(notifsRef);
-      if (snapshot.exists()) {
-        const data = snapshot.val() as Record<string, unknown>;
-        const updates: Record<string, { isRead: boolean }> = {};
-        for (const id of Object.keys(data)) {
-          updates[id] = { isRead: true };
+      const updates: Record<string, boolean> = {};
+      for (const n of notifications) {
+        if (!n.isRead) {
+          updates[`notifications/${uid}/${n.id}/isRead`] = true;
         }
-        await update(notifsRef, updates);
       }
-    } catch (error) {
-      console.error('Error marking all as read:', error);
-      toast.error('حدث خطأ في تحديث الإشعارات');
-    } finally {
-      setIsMarkingAll(false);
-    }
-  };
-
-  // Handle notification click
-  const handleNotifClick = (notif: NotificationWithActor) => {
-    // Mark as read
-    if (!notif.isRead) {
-      handleMarkRead(notif.id);
-    }
-
-    // Navigate based on type
-    if (notif.type === 'follow') {
-      const actorUsername = notif.actorData?.username || '';
-      if (actorUsername) {
-        setViewParams({ username: actorUsername });
-        navigate('profile');
+      if (Object.keys(updates).length > 0) {
+        await update(ref(db), updates);
+        toast.success('تم قراءة جميع الإشعارات');
       }
+    } catch {
+      toast.error('حدث خطأ');
+    }
+  }, [uid, notifications]);
+
+  // Handle click
+  const handleClick = useCallback(async (notif: NotificationWithActor) => {
+    await markAsRead(notif);
+    if (notif.type === 'follow' && notif.actorId) {
+      setViewParams({ userId: notif.actorId });
+      navigate('profile');
     } else if (notif.postId) {
-      useAppStore.getState().setSelectedPostId(notif.postId);
+      setSelectedPostId(notif.postId);
       navigate('post-detail');
-    }
-  };
-
-  // Handle actor name click
-  const handleActorClick = (e: React.MouseEvent, actorId: string) => {
-    e.stopPropagation();
-    const actor = actorCache[actorId];
-    if (actor?.username) {
-      setViewParams({ username: actor.username });
+    } else if (notif.actorId) {
+      setViewParams({ userId: notif.actorId });
       navigate('profile');
     }
-  };
+  }, [markAsRead, navigate, setSelectedPostId, setViewParams]);
 
-  const displayNotifications = notifications;
+  // Follow back handler
+  const handleFollowBack = useCallback(async (e: React.MouseEvent, actorId: string) => {
+    e.stopPropagation();
+    if (!uid) return;
+    try {
+      await set(ref(db, `follows/${uid}/${actorId}`), Date.now());
+      await set(ref(db, `followers/${actorId}/${uid}`), true);
+      toast.success('تمت المتابعة');
+    } catch {
+      toast.error('حدث خطأ');
+    }
+  }, [uid]);
+
+  const grouped = useMemo(() => groupByTime(notifications), [notifications]);
 
   return (
-    <div>
+    <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="sticky top-0 z-30 bg-background/95 backdrop-blur-sm border-b border-border/50 px-4 py-3">
+      <div className="sticky top-0 z-20 bg-background/80 backdrop-blur-md border-b border-border px-4 py-3">
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-bold">الإشعارات</h1>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-xs text-primary hover:text-primary/80"
-            onClick={handleMarkAllRead}
-            disabled={isMarkingAll || notifications.length === 0}
-          >
-            {isMarkingAll ? (
-              <span className="h-3.5 w-3.5 border-2 border-current border-t-transparent rounded-full animate-spin" />
-            ) : (
-              'قراءة الكل'
-            )}
+          <Button variant="ghost" size="sm" onClick={markAllAsRead} className="text-xs gap-1.5">
+            <CheckCheck className="h-4 w-4" />
+            قراءة الكل
           </Button>
         </div>
       </div>
 
-      {/* Notifications list */}
-      {isLoading ? (
-        <div>
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="flex gap-3 px-4 py-3 border-b border-border/50">
+      {loading ? (
+        <div className="space-y-0">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="flex items-start gap-3 px-4 py-3">
               <Skeleton className="h-10 w-10 rounded-full shrink-0" />
-              <div className="flex-1 space-y-1.5">
-                <Skeleton className="h-4 w-40" />
-                <Skeleton className="h-3 w-24" />
+              <div className="flex-1 space-y-2">
+                <Skeleton className="h-4 w-3/4" />
+                <Skeleton className="h-3 w-1/2" />
               </div>
             </div>
           ))}
         </div>
-      ) : displayNotifications.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-          <BellOff className="h-12 w-12 text-muted-foreground/40 mb-4" />
-          <h3 className="text-lg font-bold mb-1">لا توجد إشعارات</h3>
-          <p className="text-sm text-muted-foreground">
-            ستظهر الإشعارات هنا عندما يتفاعل الآخرون معك
-          </p>
+      ) : notifications.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+          <Bell className="h-12 w-12 mb-3 opacity-40" />
+          <p className="text-lg font-medium">لا توجد إشعارات</p>
+          <p className="text-sm mt-1">ستظهر هنا الإشعارات الجديدة</p>
         </div>
       ) : (
         <div>
-          {displayNotifications.map((notif) => {
-            const actor = notif.actorData;
-            const avatarSrc = actor?.avatarBase64
-              ? `data:image/jpeg;base64,${actor.avatarBase64}`
-              : '';
-            const actorName = actor?.fullName || actor?.username || 'مستخدم';
-            const initial = actorName.charAt(0);
+          {grouped.map((group) => (
+            <div key={group.label}>
+              <div className="px-4 py-2 text-sm font-bold text-muted-foreground bg-muted/30">
+                {group.label}
+              </div>
+              {group.items.map((notif, index) => {
+                const config = typeConfig[notif.type] || typeConfig.like;
+                const Icon = config.icon;
+                const actor = notif.actorUser;
 
-            return (
-              <button
-                key={notif.id}
-                className={`w-full flex gap-3 px-4 py-3 border-b border-border/50 text-right transition-colors hover:bg-accent/50 ${
-                  !notif.isRead ? 'bg-primary/5' : ''
-                }`}
-                onClick={() => handleNotifClick(notif)}
-              >
-                {/* Icon + Avatar */}
-                <div className="relative shrink-0">
-                  <Avatar className="h-10 w-10">
-                    <AvatarImage src={avatarSrc} alt={actorName} />
-                    <AvatarFallback className="bg-primary/20 text-primary text-sm">
-                      {initial}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="absolute -bottom-1 -left-1 h-5 w-5 rounded-full bg-background flex items-center justify-center">
-                    {getNotificationIcon(notif.type)}
-                  </span>
-                </div>
+                return (
+                  <motion.div
+                    key={notif.id}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.03 }}
+                    onClick={() => handleClick(notif)}
+                    className={cn(
+                      'flex items-start gap-3 px-4 py-3 cursor-pointer transition-colors hover:bg-accent/50 border-b border-border/30',
+                      !notif.isRead && 'border-r-2 border-r-sky-500 bg-sky-500/5'
+                    )}
+                  >
+                    {/* Actor Avatar */}
+                    <div className="relative shrink-0">
+                      {actor?.avatarBase64 ? (
+                        <img
+                          src={`data:image/jpeg;base64,${actor.avatarBase64}`}
+                          alt={actor.fullName}
+                          className="h-10 w-10 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="h-10 w-10 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
+                          {actor?.fullName?.charAt(0) || 'م'}
+                        </div>
+                      )}
+                      <span className={cn('absolute -bottom-0.5 -left-0.5 h-5 w-5 rounded-full flex items-center justify-center', config.bg)}>
+                        <Icon className={cn('h-3 w-3', config.color)} />
+                      </span>
+                    </div>
 
-                {/* Content */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm leading-relaxed">
-                    <span
-                      className="font-bold hover:underline cursor-pointer"
-                      onClick={(e) => handleActorClick(e, notif.actorId)}
-                    >
-                      {actorName}
-                    </span>{' '}
-                    {getActionText(notif.type)}
-                  </p>
-                  {notif.postId && notif.type !== 'follow' && (
-                    <p className="text-sm text-muted-foreground mt-0.5 line-clamp-1">
-                      {notif.type === 'mention' ? 'أشار إليك في منشور' : 'منشور'}
-                    </p>
-                  )}
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {formatRelativeTime(notif.timestamp)}
-                  </p>
-                </div>
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm">
+                          <span className={cn('font-bold', !notif.isRead && 'text-foreground')}>
+                            {actor?.fullName || 'مستخدم'}
+                          </span>
+                          <VerificationBadge type={actor?.verificationType} size="sm" />
+                          <span className="text-muted-foreground"> {config.label}</span>
+                        </p>
+                        <span className="text-xs text-muted-foreground shrink-0">
+                          {formatRelativeTime(notif.timestamp)}
+                        </span>
+                      </div>
 
-                {/* Unread indicator */}
-                {!notif.isRead && (
-                  <div className="shrink-0 mt-1">
-                    <div className="h-2.5 w-2.5 rounded-full bg-primary" />
-                  </div>
-                )}
-              </button>
-            );
-          })}
+                      {/* Follow back button */}
+                      {notif.type === 'follow' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="mt-1.5 h-7 text-xs rounded-full px-3"
+                          onClick={(e) => actor && handleFollowBack(e, notif.actorId)}
+                        >
+                          متابعة
+                        </Button>
+                      )}
+
+                      {/* Related post preview */}
+                      {notif.relatedPost && !notif.relatedPost.isDeleted && (
+                        <div className="mt-2 p-2 rounded-xl bg-card border border-border/50 max-w-sm">
+                          <p className="text-xs text-muted-foreground line-clamp-2">
+                            {notif.relatedPost.content.length > 100
+                              ? notif.relatedPost.content.slice(0, 100) + '...'
+                              : notif.relatedPost.content}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Unread dot */}
+                    {!notif.isRead && (
+                      <span className="h-2.5 w-2.5 rounded-full bg-sky-500 shrink-0 mt-2" />
+                    )}
+                  </motion.div>
+                );
+              })}
+            </div>
+          ))}
         </div>
       )}
     </div>
