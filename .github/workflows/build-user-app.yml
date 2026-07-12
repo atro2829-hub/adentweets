@@ -6,11 +6,12 @@ on:
     branches: [main]
     paths-ignore:
       - '.github/workflows/build-admin-app.yml'
+      - 'admin_app/**'
       - '*.md'
-      - 'resources/*'
 
 env:
-  NODE_VERSION: '22'
+  FLUTTER_VERSION: '3.27.4'
+  JAVA_VERSION: '17'
 
 jobs:
   build:
@@ -19,52 +20,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 22
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Install Bun
-        run: npm install -g bun
-
-      - name: Install dependencies
-        run: bun install
-
-      - name: Create environment file
-        run: |
-          cat > .env.local << 'ENVEOF'
-          NEXT_PUBLIC_FIREBASE_API_KEY=${{ secrets.FIREBASE_API_KEY }}
-          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=${{ secrets.FIREBASE_AUTH_DOMAIN }}
-          NEXT_PUBLIC_FIREBASE_DATABASE_URL=${{ secrets.FIREBASE_DATABASE_URL }}
-          NEXT_PUBLIC_FIREBASE_PROJECT_ID=${{ secrets.FIREBASE_PROJECT_ID }}
-          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${{ secrets.FIREBASE_STORAGE_BUCKET }}
-          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
-          NEXT_PUBLIC_FIREBASE_APP_ID=${{ secrets.FIREBASE_APP_ID }}
-          ENVEOF
-
-      - name: Build Next.js static export
-        run: bun run build
-
-      - name: Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: '21'
+          java-version: ${{ env.JAVA_VERSION }}
 
-      - name: Add & Sync Android platform
-        run: |
-          npx cap add android
-          npx cap sync android
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
 
-      - name: Build Debug APK
-        working-directory: android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
+      - name: Get dependencies
+        working-directory: user_app
+        run: flutter pub get
 
-      - name: Upload APK artifact
+      - name: Build Release APK
+        working-directory: user_app
+        run: flutter build apk --release --split-per-abi --tree-shake-icons
+
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: adentweets-user-app-debug
-          path: android/app/build/outputs/apk/debug/*.apk
+          name: adentweets-user-app-release
+          path: user_app/build/app/outputs/flutter-apk/*.apk
           if-no-files-found: error
