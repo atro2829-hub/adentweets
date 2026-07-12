@@ -1,11 +1,13 @@
 name: Build Admin App APK
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - 'src/views/admin-*'
-  workflow_dispatch:
+      - 'src/components/layout/admin-nav.tsx'
+      - 'capacitor.admin.config.ts'
 
 env:
   NODE_VERSION: '20'
@@ -26,7 +28,7 @@ jobs:
         run: npm install -g bun
 
       - name: Install dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Create environment file
         run: |
@@ -40,8 +42,15 @@ jobs:
           NEXT_PUBLIC_FIREBASE_APP_ID=${{ secrets.FIREBASE_APP_ID }}
           EOF
 
-      - name: Build Next.js static export
-        run: bun run build:static
+      - name: Use admin Capacitor config
+        run: |
+          cp capacitor.admin.config.ts capacitor.config.ts
+
+      - name: Build Next.js static export (Admin Mode)
+        run: |
+          NEXT_PUBLIC_APP_MODE=admin bun run build
+        env:
+          NEXT_PUBLIC_APP_MODE: admin
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -49,30 +58,20 @@ jobs:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Add Android platform
+        run: npx cap add android
 
-      - name: Add Android platform (Admin App)
-        run: npx cap add android --config capacitor.admin.config.ts
+      - name: Sync Capacitor
+        run: npx cap sync android
 
-      - name: Copy config files
-        run: |
-          mkdir -p android/app
-          cp upload/google-services.json android/app/google-services.json
-
-      - name: Build Android APK
+      - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          ./gradlew assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: adentweets-admin-app
-          path: android/app/build/outputs/apk/release/*.apk
+          name: adentweets-admin-app-debug
+          path: android/app/build/outputs/apk/debug/*.apk

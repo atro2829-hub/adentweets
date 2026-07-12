@@ -52,3 +52,13 @@ prompt
 server.log
 # Skills directory
 /skills/
+
+# Capacitor generated
+/android/
+
+# Database files
+/db/*.db
+/db/*.db-journal
+
+# Prisma seed (legacy)
+/prisma/seed.ts
