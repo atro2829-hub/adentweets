@@ -10,10 +10,15 @@ const config: CapacitorConfig = {
   plugins: {
     SplashScreen: {
       launchAutoHide: true,
-      backgroundColor: '#000000',
+      backgroundColor: '#0f172a',
       showSpinner: false,
+      androidScaleType: 'CENTER_CROP',
     },
   },
+  android: {
+    allowMixedContent: true,
+  },
+  icon: 'resources/icon-admin-app.png',
 };
 
 export default config;

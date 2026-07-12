@@ -12,8 +12,13 @@ const config: CapacitorConfig = {
       launchAutoHide: true,
       backgroundColor: '#000000',
       showSpinner: false,
+      androidScaleType: 'CENTER_CROP',
     },
   },
+  android: {
+    allowMixedContent: true,
+  },
+  icon: 'resources/icon-user-app.png',
 };
 
 export default config;
