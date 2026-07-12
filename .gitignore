@@ -61,4 +61,4 @@ server.log
 /db/*.db-journal
 
 # Prisma seed (legacy)
-/prisma/seed.ts
+/prisma/seed.tsadmin_icon_source.png
