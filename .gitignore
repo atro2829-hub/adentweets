@@ -62,3 +62,4 @@ server.log
 
 # Prisma seed (legacy)
 /prisma/seed.tsadmin_icon_source.png
+user_icon_source.png
