@@ -47,7 +47,7 @@ class HomeScreen extends ConsumerWidget {
           ),
         );
       },
-      loading: () => ListView.builder(itemCount: 5, itemBuilder: (context, index) => const PostSkeleton()),
+      loading: () => ListView.builder(itemCount: 5, itemBuilder: (context, index) => PostSkeleton()),
       error: (error, _) => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
         const Icon(Icons.error_outline, size: 64, color: Colors.red),
         const SizedBox(height: 16),

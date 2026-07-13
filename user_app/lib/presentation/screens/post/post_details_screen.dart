@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../data/services/comment_service.dart';
 import '../../../providers/posts/posts_provider.dart';
+import '../../../providers/auth/auth_provider.dart';
 import '../../widgets/cards/post_card.dart';
 import '../../widgets/cards/comment_card.dart';
 import '../../widgets/image/avatar_widget.dart';

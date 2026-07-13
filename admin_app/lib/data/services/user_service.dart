@@ -129,26 +129,20 @@ class UserService {
   }
 
   Stream<List<UserModel>> getFollowers(String userId) {
-    return _dbRef.child(FirebasePaths.follows).child(userId).child('followers').onValue.map((event) {
-      final users = <UserModel>[];
-      if (event.snapshot.exists) {
-        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-        final futures = data.keys.map((key) => getUser(key));
-        return Future.wait(futures).then((list) => list.whereType<UserModel>().toList());
-      }
-      return users;
-    }).asyncExpand((f) => Stream.value(f));
+    return _dbRef.child(FirebasePaths.follows).child(userId).child('followers').onValue.asyncMap((event) async {
+      if (!event.snapshot.exists) return <UserModel>[];
+      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+      final results = await Future.wait(data.keys.map((key) => getUser(key)));
+      return results.whereType<UserModel>().toList();
+    });
   }
 
   Stream<List<UserModel>> getFollowing(String userId) {
-    return _dbRef.child(FirebasePaths.follows).child(userId).child('following').onValue.map((event) {
-      final users = <UserModel>[];
-      if (event.snapshot.exists) {
-        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
-        final futures = data.keys.map((key) => getUser(key));
-        return Future.wait(futures).then((list) => list.whereType<UserModel>().toList());
-      }
-      return users;
-    }).asyncExpand((f) => Stream.value(f));
+    return _dbRef.child(FirebasePaths.follows).child(userId).child('following').onValue.asyncMap((event) async {
+      if (!event.snapshot.exists) return <UserModel>[];
+      final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+      final results = await Future.wait(data.keys.map((key) => getUser(key)));
+      return results.whereType<UserModel>().toList();
+    });
   }
 }

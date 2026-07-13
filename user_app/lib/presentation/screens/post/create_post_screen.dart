@@ -78,7 +78,7 @@ class _CreatePostScreenState extends ConsumerState<CreatePostScreen> {
                 TextField(
                   controller: _contentController,
                   maxLines: null,
-                  maxLength: AppDimens.maxPostLength,
+                  maxLength: AppDimens.maxPostLength.toInt(),
                   decoration: const InputDecoration(border: InputBorder.none, hintText: AppStrings.whatIsHappening, counterText: ''),
                   onChanged: (_) => setState(() {}),
                 ),

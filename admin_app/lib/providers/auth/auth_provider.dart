@@ -87,8 +87,6 @@ class LoginNotifier extends StateNotifier<AsyncValue<void>> {
   Future<void> loginWithGoogle() async {
     state = const AsyncLoading();
     try {
-      await _ref.read(authServiceProvider).signInWithGoogle();
-      state = const AsyncData(null);
     } catch (e) {
       state = AsyncError(e.toString(), StackTrace.current);
     }

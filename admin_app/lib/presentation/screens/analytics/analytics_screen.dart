@@ -215,15 +215,15 @@ class AnalyticsScreen extends ConsumerWidget {
       crossAxisSpacing: 12,
       childAspectRatio: 2.5,
       children: [
-        _buildSummaryCard('Avg Posts/User', analytics.totalUsers > 0 ? (analytics.totalPosts / analytics.totalUsers).toStringAsFixed(1) : '0', Icons.post_add),
-        _buildSummaryCard('Reports/Day', (analytics.pendingReports / 7).toStringAsFixed(1), Icons.flag),
-        _buildSummaryCard('Growth Rate', '+${(analytics.totalUsers * 0.12).toStringAsFixed(0)}%', Icons.trending_up),
-        _buildSummaryCard('Retention', '${(65 + (analytics.totalUsers % 20)).toString()}%', Icons.people),
+        _buildSummaryCard(context, 'Avg Posts/User', analytics.totalUsers > 0 ? (analytics.totalPosts / analytics.totalUsers).toStringAsFixed(1) : '0', Icons.post_add),
+        _buildSummaryCard(context, 'Reports/Day', (analytics.pendingReports / 7).toStringAsFixed(1), Icons.flag),
+        _buildSummaryCard(context, 'Growth Rate', '+${(analytics.totalUsers * 0.12).toStringAsFixed(0)}%', Icons.trending_up),
+        _buildSummaryCard(context, 'Retention', '${(65 + (analytics.totalUsers % 20)).toString()}%', Icons.people),
       ],
     );
   }
 
-  Widget _buildSummaryCard(String title, String value, IconData icon) {
+  Widget _buildSummaryCard(BuildContext ctx, String title, String value, IconData icon) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(AppDimens.paddingMedium),
@@ -235,11 +235,11 @@ class AnalyticsScreen extends ConsumerWidget {
               children: [
                 Icon(icon, color: const Color(AppColors.primary), size: 20),
                 const SizedBox(width: 8),
-                Text(title, style: Theme.of(context).textTheme.bodySmall),
+                Text(title, style: Theme.of(ctx).textTheme.bodySmall),
               ],
             ),
             const SizedBox(height: 4),
-            Text(value, style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
+            Text(value, style: Theme.of(ctx).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
           ],
         ),
       ),

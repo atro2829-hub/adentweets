@@ -79,7 +79,11 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
               const SizedBox(height: 16),
               TextFormField(controller: _confirmPasswordController, obscureText: _obscureConfirm, decoration: InputDecoration(labelText: AppStrings.confirmPassword, prefixIcon: const Icon(Icons.lock_outline), suffixIcon: IconButton(icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility), onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm))), validator: (v) => AuthValidator.validateConfirmPassword(v, _passwordController.text)),
               const SizedBox(height: 12),
-              Row(children: [SizedBox(height: 24, width: 24, child: Checkbox(value: _agreeTerms, onChanged: (v) => setState(() => _agreeTerms = v ?? false))), const SizedBox(width: 8), Expanded(child: GestureDetector(onTap: () => setState(() => _agreeTerms = !_agreeTerms), child: Text(AppStrings.termsAgree, style: const TextStyle(fontSize: 12)))]),
+              Row(children: [
+                SizedBox(height: 24, width: 24, child: Checkbox(value: _agreeTerms, onChanged: (v) => setState(() => _agreeTerms = v ?? false))),
+                const SizedBox(width: 8),
+                Expanded(child: GestureDetector(onTap: () => setState(() => _agreeTerms = !_agreeTerms), child: Text(AppStrings.termsAgree, style: const TextStyle(fontSize: 12)))),
+              ]),
               const SizedBox(height: 24),
               ElevatedButton(onPressed: isLoading ? null : _signup, child: isLoading ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : Text(AppStrings.signup)),
               const SizedBox(height: 24),
