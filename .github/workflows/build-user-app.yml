@@ -25,9 +25,23 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.22.3'
+          flutter-version: '3.24.5'
           channel: 'stable'
           cache: true
+
+      - name: Create Android project structure
+        working-directory: user_app
+        run: |
+          # Backup our custom files
+          cp pubspec.yaml /tmp/pubspec.yaml
+          # Create proper Android project structure
+          flutter create . --org com.adentweets --project-name adentweets --platforms android
+          # Restore our pubspec with all dependencies
+          cp /tmp/pubspec.yaml pubspec.yaml
+          # Copy google-services.json
+          cp android/app/google-services.json /tmp/google-services.json 2>/dev/null || true
+          flutter create . --org com.adentweets --project-name adentweets --platforms android
+          cp /tmp/google-services.json android/app/google-services.json 2>/dev/null || true
 
       - name: Get Flutter dependencies
         working-directory: user_app
