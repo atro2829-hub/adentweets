@@ -1,9 +1,10 @@
 plugins {
     id "com.android.application"
-    id "kotlin-android"
+    id "org.jetbrains.kotlin.android"
     id "dev.flutter.flutter-gradle-plugin"
     id "com.google.gms.google-services"
 }
+
 def localPropertiesFile = rootProject.file("local.properties")
 def localProperties = new Properties()
 if (localPropertiesFile.exists()) {
@@ -39,9 +40,11 @@ android {
         }
     }
 }
+
 flutter {
     source '../..'
 }
+
 dependencies {
     implementation 'androidx.multidex:multidex:2.0.1'
     implementation platform('com.google.firebase:firebase-bom:32.7.0')
