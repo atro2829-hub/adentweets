@@ -1,49 +1,57 @@
 name: Build User App APK
 
 on:
-  workflow_dispatch:
   push:
-    branches: [main]
-    paths-ignore:
-      - '.github/workflows/build-admin-app.yml'
-      - 'admin_app/**'
-      - '*.md'
-
-env:
-  FLUTTER_VERSION: '3.27.4'
-  JAVA_VERSION: '17'
+    branches: [ main ]
+    paths:
+      - 'user_app/**'
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
-          java-version: ${{ env.JAVA_VERSION }}
+          java-version: '17'
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: ${{ env.FLUTTER_VERSION }}
+          flutter-version: '3.22.3'
           channel: 'stable'
           cache: true
 
-      - name: Get dependencies
+      - name: Get Flutter dependencies
         working-directory: user_app
         run: flutter pub get
 
-      - name: Build Release APK
+      - name: Build APK
         working-directory: user_app
-        run: flutter build apk --release --split-per-abi --tree-shake-icons
+        run: flutter build apk --debug --target-platform android-arm64
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: adentweets-user-app-release
-          path: user_app/build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: error
+          name: AdenTweets-User-App-APK
+          path: user_app/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 30
+
+      - name: Create Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag: user-v1.0.0-${{ github.run_number }}
+          name: "AdenTweets User App v1.0.0 Build #${{ github.run_number }}"
+          files: user_app/build/app/outputs/flutter-apk/app-debug.apk
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
