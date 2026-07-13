@@ -29,19 +29,21 @@ jobs:
           channel: 'stable'
           cache: true
 
-      - name: Create Android project structure
+      - name: Prepare Android project
         working-directory: admin_app
         run: |
-          # Backup our custom files
-          cp pubspec.yaml /tmp/pubspec.yaml
-          # Create proper Android project structure
-          flutter create . --org com.adentweets --project-name adentweets_admin --platforms android
-          # Restore our pubspec with all dependencies
-          cp /tmp/pubspec.yaml pubspec.yaml
-          # Copy google-services.json
-          cp android/app/google-services.json /tmp/google-services.json 2>/dev/null || true
-          flutter create . --org com.adentweets --project-name adentweets_admin --platforms android
-          cp /tmp/google-services.json android/app/google-services.json 2>/dev/null || true
+          # Backup custom files
+          cp pubspec.yaml /tmp/admin_pubspec.yaml
+          cp android/app/google-services.json /tmp/admin_google_services.json
+          # Remove old android directory completely
+          rm -rf android
+          # Generate fresh v2 Android project
+          flutter create . --org com.adentweets.admin --project-name adentweets_admin --platforms android
+          # Restore custom pubspec with all dependencies
+          cp /tmp/admin_pubspec.yaml pubspec.yaml
+          # Copy back google-services.json
+          mkdir -p android/app
+          cp /tmp/admin_google_services.json android/app/google-services.json
 
       - name: Get Flutter dependencies
         working-directory: admin_app
